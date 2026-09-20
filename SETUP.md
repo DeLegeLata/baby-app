@@ -40,9 +40,9 @@ the data).
 In Authentication → Users, add both parents with **Add user → Create new user**
 and a password each. Tick "Auto Confirm User".
 
-Then paste this into the SQL editor, with the two email addresses swapped in. It
-looks the user ids up itself, so nothing has to be copied by hand, and running it
-twice is harmless.
+Then paste this into the SQL editor. It makes every account that exists a member
+of the one household, so create both users first and run it after. Nothing has
+to be copied by hand, and running it twice is harmless.
 
 ```sql
 with
@@ -62,7 +62,7 @@ with
 insert into members (household_id, user_id, display_name)
 select household.id, u.id, split_part(u.email, '@', 1)
 from household
-join auth.users u on u.email in ('parent1@example.com', 'parent2@example.com')
+cross join auth.users u
 on conflict do nothing;
 
 -- check
