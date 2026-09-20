@@ -6,6 +6,9 @@
   import DiaperSheet from './lib/components/DiaperSheet.svelte';
   import Timeline from './lib/components/Timeline.svelte';
   import SettingsSheet from './lib/components/SettingsSheet.svelte';
+  import SignIn from './lib/components/SignIn.svelte';
+  import ConflictDialog from './lib/components/ConflictDialog.svelte';
+  import { since } from './lib/format';
 
   let feedOpen = $state(false);
   let colourEntryId = $state<string | null>(null);
@@ -27,7 +30,25 @@
   </div>
 
   {#if app.unsent > 0}
-    <p class="banner">{app.unsent} entries not sent yet. They upload once sync is switched on.</p>
+    <p class="banner">
+      {app.unsent}
+      {app.unsent === 1 ? 'entry' : 'entries'} not sent yet.
+      {#if !app.syncConfigured}
+        This build has no Supabase keys, so nothing leaves this phone.
+      {:else if app.syncNeedsSignIn}
+        Sign in below to upload them.
+      {:else}
+        They upload as soon as this phone can.
+      {/if}
+    </p>
+  {/if}
+
+  {#if app.syncError}
+    <p class="banner">{app.syncError}</p>
+  {/if}
+
+  {#if app.syncNeedsSignIn}
+    <SignIn />
   {/if}
 
   <TimerCard />
@@ -62,6 +83,18 @@
   </section>
 
   <Timeline />
+
+  {#if app.signedIn}
+    <p class="muted">
+      Synced {app.lastSyncAt ? since(app.now - app.lastSyncAt) : 'not yet'}{app.lastSyncAt &&
+      app.now - app.lastSyncAt >= 60_000
+        ? ' ago'
+        : ''}.
+      {#if app.partnerSeenAt}
+        The other phone last synced {since(app.now - Date.parse(app.partnerSeenAt))} ago.
+      {/if}
+    </p>
+  {/if}
 </main>
 
 <nav class="actions">
@@ -76,3 +109,4 @@
 <FeedSheet bind:open={feedOpen} />
 <DiaperSheet bind:entryId={colourEntryId} />
 <SettingsSheet bind:open={settingsOpen} />
+<ConflictDialog />

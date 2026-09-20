@@ -9,3 +9,6 @@ PLAN.md
 QUESTIONS.md
 TESTS.md
 research/
+
+# Local Supabase keys
+.env.local

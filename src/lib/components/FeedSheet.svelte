@@ -95,7 +95,14 @@
     <button class="ghost" onclick={() => (open = false)}>Close</button>
   </div>
 
-  {#if running && running.feed_method === 'nursing'}
+  {#if running}
+    {#if running.logged_by !== app.who?.user_id}
+      <p class="banner">
+        A feed is already running from the other phone, started {since(
+          app.now - Date.parse(running.started_at)
+        )} ago. Carry on with it rather than starting a second one.
+      </p>
+    {/if}
     <p class="muted">
       Running since {since(app.now - Date.parse(running.started_at))} ago.
       {#if app.timer.stillFeeding}<span class="flag">Still feeding?</span>{/if}
