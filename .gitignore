@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+*.local
+
+# Planning docs stay local: the app repo will be public.
+PLAN.md
+QUESTIONS.md
+TESTS.md
+research/
