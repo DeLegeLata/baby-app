@@ -38,17 +38,42 @@ the data).
 ## 4. Make the two accounts and the household
 
 In Authentication → Users, add both parents with **Add user → Create new user**
-and a password each. Then, in the SQL editor:
+and a password each. Tick "Auto Confirm User".
+
+Then paste this into the SQL editor, with the two email addresses swapped in. It
+looks the user ids up itself, so nothing has to be copied by hand, and running it
+twice is harmless.
 
 ```sql
-insert into households (name, time_zone) values ('Home', 'America/Toronto')
-returning id;
--- use that id below
-insert into babies (household_id, name) values ('<household-id>', 'Baby');
+with
+  home as (
+    insert into households (name, time_zone)
+    select 'Home', 'America/Toronto'
+    where not exists (select 1 from households)
+    returning id
+  ),
+  household as (select id from home union all select id from households limit 1),
+  baby as (
+    insert into babies (household_id, name)
+    select household.id, 'Baby' from household
+    where not exists (select 1 from babies)
+    returning id
+  )
 insert into members (household_id, user_id, display_name)
-values ('<household-id>', '<user-id-1>', 'Parent 1'),
-       ('<household-id>', '<user-id-2>', 'Parent 2');
+select household.id, u.id, split_part(u.email, '@', 1)
+from household
+join auth.users u on u.email in ('parent1@example.com', 'parent2@example.com')
+on conflict do nothing;
+
+-- check
+select h.name, b.name as baby, count(m.*) as members
+from households h
+left join babies b on b.household_id = h.id
+left join members m on m.household_id = h.id
+group by 1, 2;
 ```
+
+It should report one household, one baby and **2** members.
 
 Then turn **off** new sign-ups in Authentication → Sign In / Providers, so the
 two accounts are the only ones.
