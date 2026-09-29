@@ -138,3 +138,25 @@ create policy reminder_runs_read on reminder_runs for select using (auth.uid () 
 -- Realtime for the two phones.
 alter publication supabase_realtime
 add table entries;
+
+-- --- Keep-alive --------------------------------------------------------------
+-- Supabase pauses a free project after 7 days without activity.
+-- .github/workflows/keepalive.yml calls keepalive() once a day, which overwrites
+-- this one row. It has no policies, so only the function can write it.
+
+create table if not exists keepalive (
+  id integer primary key default 1 check (id = 1),
+  pinged_at timestamptz not null default now()
+);
+
+alter table keepalive enable row level security;
+
+create or replace function keepalive () returns timestamptz language sql security definer
+set
+  search_path = public as $$
+  insert into keepalive (id, pinged_at) values (1, now())
+  on conflict (id) do update set pinged_at = excluded.pinged_at
+  returning pinged_at;
+$$;
+
+grant execute on function keepalive () to anon;

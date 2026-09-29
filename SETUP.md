@@ -81,6 +81,16 @@ two accounts are the only ones.
 Signing in on a phone adopts that household and baby, and anything logged before
 sign-in is re-pointed at them and uploaded.
 
+## 5. Keep the free project awake
+
+Supabase pauses a free project after 7 days without activity. The
+[`keepalive`](.github/workflows/keepalive.yml) workflow prevents that by calling
+`keepalive()` from the end of `supabase/schema.sql` once a day, which overwrites
+a single timestamp row. The workflow re-enables itself on every run, because
+GitHub turns off scheduled workflows in a public repo after 60 days without a
+commit. If the project is paused anyway, restore it from the Supabase dashboard
+within 90 days.
+
 ## What is not built yet
 
 Slice 2: the reminders and ack Edge Functions, the Bark and ntfy senders, the
