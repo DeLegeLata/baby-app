@@ -5,6 +5,7 @@
   import StatusCard from './lib/components/StatusCard.svelte';
   import TodayCard from './lib/components/TodayCard.svelte';
   import BathCard from './lib/components/BathCard.svelte';
+  import DaycareCard from './lib/components/DaycareCard.svelte';
   import BathSheet from './lib/components/BathSheet.svelte';
   import HistoryView from './lib/components/HistoryView.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
@@ -61,6 +62,7 @@
 
   {#if ui.tab === 'today'}
     <StatusCard />
+    <DaycareCard />
     <TodayCard />
     <BathCard />
   {:else}

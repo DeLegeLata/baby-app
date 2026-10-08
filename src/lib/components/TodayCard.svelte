@@ -1,12 +1,12 @@
 <script lang="ts">
-  // Today at a glance: the fixed times that apply, the daycare nap prompt,
-  // and every sleep that belongs to today (last night included).
+  // Today at a glance: the fixed times that apply, and every sleep that
+  // belongs to today (last night included). The daycare nap has its own card.
   import { app } from '../state.svelte';
   import { ui } from '../ui.svelte';
   import { clock12, clockAt, dur, keyLabel } from '../format';
   import { KIND_LABEL, MOOD_LABEL, OFF_LABEL, PLACE_LABEL, type Sleep } from '../model';
   import { netSleepMinutes } from '../engine';
-  import { addDays, atMinutes, minutesOf } from '../time';
+  import { addDays } from '../time';
 
   const tz = $derived(app.settings.time_zone);
   const sched = $derived(app.todaySchedule);
@@ -14,22 +14,13 @@
     ...app.sleepsOn(addDays(app.today, -1)).filter((s) => s.kind === 'night'),
     ...app.sleepsOn(app.today)
   ]);
-  const nowMin = $derived(minutesOf(app.today, app.now, tz));
-
-  // The daycare nap prompt: from the start of the nap window until a nap is in.
-  const askForReport = $derived(
-    sched.daycare &&
-      sched.napStart !== null &&
-      nowMin >= sched.napStart &&
-      !sched.noNap &&
-      !app.sleepsOn(app.today).some((s) => s.kind === 'nap')
-  );
 
   const fixed = $derived.by(() => {
     const out: string[] = [];
     if (sched.mustBeUp !== null) out.push(`Up by ${clock12(sched.mustBeUp)}`);
-    if (sched.napStart !== null && sched.napEnd !== null) {
-      out.push(`${sched.daycare ? 'Daycare nap' : 'Nap'} ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}`);
+    // On a daycare day the Daycare card shows the nap.
+    if (!sched.daycare && sched.napStart !== null && sched.napEnd !== null) {
+      out.push(`Nap ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}`);
     }
     if (sched.latestBedtime !== null) out.push(`Asleep by ${clock12(sched.latestBedtime)} at the latest`);
     for (const w of sched.noSleep) {
@@ -37,16 +28,6 @@
     }
     return out;
   });
-
-  function addReport() {
-    if (sched.napStart === null || sched.napEnd === null) return;
-    ui.newSleep({
-      kind: 'nap',
-      place: 'daycare',
-      asleep_at: new Date(atMinutes(app.today, sched.napStart, tz)).toISOString(),
-      woke_at: new Date(atMinutes(app.today, sched.napEnd, tz)).toISOString()
-    });
-  }
 
   function describe(s: Sleep): string {
     const start = s.asleep_at ?? s.in_bed_at!;
@@ -79,17 +60,6 @@
     </ul>
   {/if}
 
-  {#if askForReport}
-    <div class="card" style="margin: 12px 0 0; background: var(--accent-soft); border: none">
-      <b>Daycare nap</b>
-      <p class="muted" style="margin: 4px 0 10px">Add the times from their report, so tonight's bedtime is right.</p>
-      <div class="row">
-        <button class="primary" onclick={addReport}>Add from report</button>
-        <button onclick={() => app.saveDay(app.today, { no_nap: true })}>He did not nap</button>
-      </div>
-    </div>
-  {/if}
-
   {#if sleeps.length}
     <ul class="sleeps" style="margin-top: 8px">
       {#each sleeps as s (s.id)}
@@ -111,4 +81,5 @@
     <button onclick={() => (ui.day = app.today)}>Change today</button>
     <button onclick={() => (ui.day = addDays(app.today, 1))}>Change tomorrow</button>
   </div>
+  <button class="link" style="margin-top: 8px" onclick={() => ui.newSleep()}>Add a sleep from earlier</button>
 </section>

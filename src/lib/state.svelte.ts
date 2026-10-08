@@ -26,6 +26,7 @@ import {
   History,
   bathStatus,
   dayOf,
+  daycareEntry,
   guessKind,
   learn,
   phaseOf,
@@ -34,6 +35,7 @@ import {
   plannedReminders,
   type BathStatus,
   type BedtimePlan,
+  type DaycareEntry,
   type EngineInput,
   type Phase,
   type WakePlan
@@ -67,7 +69,7 @@ import {
   touchMember,
   type Conflict
 } from './sync';
-import { dateKey, minutesOf, type DateKey } from './time';
+import { dateKey, isoWeekday, minutesOf, parseClock, type DateKey } from './time';
 
 /** Screen state is proxied, and IndexedDB cannot store a proxy. */
 const plain = <T>(value: T): T => $state.snapshot(value) as T;
@@ -452,6 +454,54 @@ class AppState {
 
   dayRow(date: DateKey): DayRow | null {
     return this.days.find((d) => d.date === date) ?? null;
+  }
+
+  // --- The daycare card ----------------------------------------------------------
+
+  /** The nap he had at daycare on a date: the nap marked daycare, else the first nap. */
+  daycareNap(date: DateKey): Sleep | null {
+    const naps = this.sleepsOn(date).filter((s) => s.kind === 'nap');
+    return naps.find((s) => s.place === 'daycare') ?? naps[0] ?? null;
+  }
+
+  /**
+   * Nap times from the Daycare card ('HH:MM'). Still to come, they become the
+   * day's planned window; already over, they become the nap itself.
+   */
+  async setDaycareNap(date: DateKey, from: string, to: string): Promise<DaycareEntry> {
+    const entry = daycareEntry(date, parseClock(from), parseClock(to), Date.now(), this.settings.time_zone);
+    if (entry.kind === 'error') return entry;
+    if (entry.kind === 'plan') {
+      const override = { ...plain(this.dayRow(date)?.override ?? {}), nap_start: from, nap_end: to };
+      await this.saveDay(date, { override, no_nap: false });
+      return entry;
+    }
+    const existing = this.daycareNap(date);
+    await this.saveSleep(existing?.id ?? null, 'nap', {
+      asleep_at: new Date(entry.startAt).toISOString(),
+      woke_at: new Date(entry.endAt).toISOString(),
+      place: existing?.place ?? 'daycare'
+    });
+    if (this.dayRow(date)?.no_nap) await this.saveDay(date, { no_nap: false });
+    return entry;
+  }
+
+  /** Back to the usual nap window for a date. */
+  async usualNapWindow(date: DateKey) {
+    const { nap_start: _start, nap_end: _end, ...rest } = plain(this.dayRow(date)?.override ?? {});
+    await this.saveDay(date, { override: rest });
+  }
+
+  /** Daycare reported no nap (or, with false, that he napped after all). */
+  async setNoNap(date: DateKey, noNap: boolean) {
+    await this.saveDay(date, { no_nap: noNap });
+  }
+
+  /** Whether he is at daycare on a date, against the usual daycare days. */
+  async setDaycare(date: DateKey, attending: boolean) {
+    const { daycare: _was, ...rest } = plain(this.dayRow(date)?.override ?? {});
+    const usual = this.settings.daycare_days.includes(isoWeekday(date));
+    await this.saveDay(date, { override: attending === usual ? rest : { ...rest, daycare: attending } });
   }
 
   /** Sleeps that belong to a date, earliest first. */
