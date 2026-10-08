@@ -14,6 +14,7 @@ import {
   scheduleFor,
   dayIndex,
   sleepBand,
+  wakingMinutes,
   weeklySummary,
   type DayLike,
   type EngineInput,
@@ -370,3 +371,34 @@ describe('history', () => {
     expect(lines[0]).toMatch(/Not enough logged yet/);
   });
 });
+
+describe('fixes from review', () => {
+  it('does not move on to tomorrow when an evening doze logged as a night ends the same evening', () => {
+    const morning = sleep('night', '2026-10-07', '20:15', '+06:30');
+    const doze = sleep('night', THU, '17:15', '17:45');
+    const h = new History(input([morning, doze], t(THU, '18:00')));
+    expect(h.today()).toBe(THU);
+    expect(planBedtime(input([morning, doze], t(THU, '18:00'))).date).toBe(THU);
+  });
+
+  it('guesses a catnap, not a night, for a doze in the car at 5:15 p.m.', () => {
+    expect(guessKind(input([], t(THU, '17:15')), 'asleep')).toBe('catnap');
+    expect(guessKind(input([], t(THU, '18:30')), 'bed')).toBe('night');
+  });
+
+  it('never counts a waking past the end of its night', () => {
+    const night = sleep('night', THU, '20:15', '+06:30', { wakings: [{ start: t(THU, '+02:00'), end: null }] });
+    const aDayLater = toMs(t('2026-10-10', '12:00'));
+    expect(wakingMinutes(night, aDayLater)).toBe(270); // 02:00 to 06:30
+  });
+
+  it('aims for a longer night after a day with no nap', () => {
+    const days: DayLike[] = [{ date: THU, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+    const night = sleep('night', THU, '20:15', null);
+    const plan = planWake(input([night], t('2026-10-09', '05:00'), { days }), night);
+    // 11 h for his age with no day sleep: enough at 7:15, so the 7:00 must-be-up decides
+    expect(clock(plan.enoughAt)).toBe('7:15 a.m.');
+    expect(clock(plan.wakeAt)).toBe('7:00 a.m.');
+  });
+});
+

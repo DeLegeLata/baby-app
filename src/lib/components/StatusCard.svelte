@@ -55,7 +55,7 @@
     <p class="big">Settling {since(app.now - Date.parse(cur.in_bed_at!))}</p>
     <p class="muted">
       {tidy(`In bed at ${at(Date.parse(cur.in_bed_at!))}.`)} He usually takes about
-      {dur(app.bedtime?.learned.settle ?? app.settings.settle_min)} to fall asleep.
+      {dur(app.settle)} to fall asleep.
     </p>
   {:else if app.phase === 'waking' && cur && openWaking}
     <p class="muted">Awake in the night</p>

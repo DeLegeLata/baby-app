@@ -111,6 +111,21 @@ create table if not exists planned_reminders (
 create index if not exists planned_reminders_due on planned_reminders (send_at)
 where sent_at is null;
 
+-- A reminder that was cancelled (the night began, or he was up) and is then
+-- planned again (he went back down) is due again, even if it went out before.
+create or replace function replan_reminder () returns trigger language plpgsql as $$
+begin
+  if new.send_at is not null and old.send_at is null then
+    new.sent_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists planned_reminders_replan on planned_reminders;
+create trigger planned_reminders_replan before update on planned_reminders
+for each row execute function replan_reminder ();
+
 -- --- Row-level security ----------------------------------------------------------------
 
 alter table sleeps enable row level security;

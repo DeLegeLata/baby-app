@@ -103,12 +103,16 @@ export function dayOf(s: SleepLike, timeZone: string): DateKey {
   return s.kind === 'night' ? dateKey(at - 12 * HOUR, timeZone) : dateKey(at, timeZone);
 }
 
-/** Minutes awake in the night, counting an open waking up to `now`. */
+/**
+ * Minutes awake in the night. An open waking counts up to `now` while the
+ * night runs, and no waking counts past the morning wake once it has ended.
+ */
 export function wakingMinutes(s: SleepLike, now: number): number {
+  const limit = s.woke_at ? toMs(s.woke_at) : now;
   let total = 0;
   for (const w of s.wakings ?? []) {
     const start = toMs(w.start);
-    const end = w.end ? toMs(w.end) : now;
+    const end = Math.min(w.end ? toMs(w.end) : limit, limit);
     if (end > start) total += (end - start) / MINUTE;
   }
   return total;
@@ -331,11 +335,15 @@ export class History {
 
   /**
    * The day he is in now: the day after the last night that ended in the past
-   * 20 hours, else the calendar date (an evening runs on until 4 a.m.).
+   * 20 hours, else the calendar date (an evening runs on until 4 a.m.). A
+   * "night" that ended on the evening it began (a car doze logged as a night)
+   * does not start a new day.
    */
   today(): DateKey {
     const now = this.input.now;
-    const nights = this.sleeps.filter((s) => s.kind === 'night' && s.woke_at);
+    const nights = this.sleeps.filter(
+      (s) => s.kind === 'night' && s.woke_at && dateKey(s.woke_at, this.tz) !== dayOf(s, this.tz)
+    );
     const last = nights[nights.length - 1];
     if (last && now - toMs(last.woke_at!) < 20 * HOUR && toMs(last.woke_at!) <= now) {
       return addDays(dayOf(last, this.tz), 1);
@@ -776,8 +784,10 @@ export function planWake(input: EngineInput, night: SleepLike): WakePlan {
     : toMs(night.in_bed_at!) + learned.settle * MINUTE;
   const asleepMin = minutesOf(morning, asleepAt, tz);
   const band = sleepBand(input.birth_at, input.now, tz);
-  const daySleep = h.facts(nightDate).daySleep;
-  const need = Math.max(learned.night, band.minH * 60 - (daySleep || learned.napLen));
+  // The day before this night: what he slept, or the daycare nap it assumed.
+  const day = napScenario(h.facts(nightDate), h.schedule(nightDate), learned.napLen, Infinity);
+  const daySleep = (day.nap?.len ?? 0) + day.catnaps.reduce((s, c) => s + c.len, 0);
+  const need = Math.max(learned.night, band.minH * 60 - daySleep);
   const awake = wakingMinutes(night, input.now);
   const enough = asleepMin + need + awake;
 
@@ -832,7 +842,11 @@ export function phaseOf(s: SleepLike | null): Phase {
   return openWaking(s) ? 'waking' : 'asleep';
 }
 
-/** The kind a new sleep most likely is, from the time of day and the nap window. */
+/**
+ * The kind a new sleep most likely is: night from two hours before his usual
+ * bedtime until 5 a.m., otherwise a nap if he is put down or it falls near the
+ * nap window, otherwise a catnap (the car, the stroller).
+ */
 export function guessKind(
   input: EngineInput,
   how: 'bed' | 'asleep',
@@ -841,7 +855,8 @@ export function guessKind(
   const tz = input.settings.time_zone;
   const date = dateKey(at, tz);
   const min = minutesOf(date, at, tz);
-  if (min >= 17 * 60 || min < 5 * 60) return 'night';
+  const nightFrom = Math.min(parseClock(input.settings.usual_bedtime), 21 * 60) - 120;
+  if (min >= nightFrom || min < 5 * 60) return 'night';
   if (how === 'bed') return 'nap';
   const sched = scheduleFor(date, input.settings, dayIndex(input.days));
   if (sched.napStart !== null && sched.napEnd !== null && min >= sched.napStart - 90 && min <= sched.napEnd) {
