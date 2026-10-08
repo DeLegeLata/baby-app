@@ -25,6 +25,30 @@
     if (app.nightLook) document.documentElement.dataset.look = 'night';
     else delete document.documentElement.dataset.look;
   });
+
+  /** Chrome on Android offers this when the app can be installed. */
+  type InstallPrompt = Event & { prompt: () => Promise<void> };
+  let installEvent = $state<InstallPrompt | null>(null);
+
+  $effect(() => {
+    const onPrompt = ((e: Event) => {
+      e.preventDefault();
+      installEvent = e as InstallPrompt;
+    }) as EventListener;
+    const onInstalled = () => (installEvent = null);
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  });
+
+  async function install() {
+    if (!installEvent) return;
+    await installEvent.prompt();
+    installEvent = null;
+  }
 </script>
 
 <main>
@@ -37,6 +61,13 @@
     <button aria-pressed={ui.tab === 'today'} onclick={() => (ui.tab = 'today')}>Today</button>
     <button aria-pressed={ui.tab === 'history'} onclick={() => (ui.tab = 'history')}>History</button>
   </div>
+
+  {#if installEvent}
+    <p class="banner">
+      Add Sleep to this phone's home screen so it opens like an app.
+      <button class="primary" onclick={install}>Install app</button>
+    </p>
+  {/if}
 
   {#if app.unsent > 0}
     <p class="banner">
