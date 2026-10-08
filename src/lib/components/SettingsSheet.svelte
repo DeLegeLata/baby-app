@@ -6,6 +6,7 @@
   import { ui } from '../ui.svelte';
   import { settingsSchema, type AppSettings, type NoSleepWindow } from '../model';
   import { disablePush, enablePush, sendTest } from '../reminders';
+  import { describeError } from '../sync';
 
   const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -50,7 +51,9 @@
       daycare_days: [...draft.daycare_days].sort(),
       routine_min: Number(draft.routine_min),
       settle_min: Number(draft.settle_min),
-      reminder_lead_min: Number(draft.reminder_lead_min)
+      reminder_lead_min: Number(draft.reminder_lead_min),
+      bath_every_days: Number(draft.bath_every_days),
+      bath_remind_at: orNull(draft.bath_remind_at)
     };
     const parsed = settingsSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -86,7 +89,7 @@
       await enablePush(who.household_id, who.user_id);
       pushMessage = 'Reminders are on for this phone.';
     } catch (e) {
-      pushMessage = e instanceof Error ? e.message : String(e);
+      pushMessage = describeError(e);
     } finally {
       pushBusy = false;
       await app.refreshPush();
@@ -110,7 +113,7 @@
       await sendTest(app.who.household_id);
       pushMessage = 'Sent. It should arrive on every phone with reminders on within a minute.';
     } catch (e) {
-      pushMessage = e instanceof Error ? e.message : String(e);
+      pushMessage = describeError(e);
     }
   }
 </script>
@@ -193,6 +196,22 @@
     </div>
   </div>
 
+  <h3 style="margin-top: 16px">Bath</h3>
+  <div class="grid2">
+    <div>
+      <label for="bath-every">A bath every (days)</label>
+      <input id="bath-every" type="number" inputmode="numeric" min="1" max="14" bind:value={draft.bath_every_days} />
+    </div>
+    <div>
+      <label for="bath-remind">Reminder on bath days</label>
+      <input id="bath-remind" type="time" bind:value={draft.bath_remind_at} />
+    </div>
+  </div>
+  <p class="muted">
+    Paediatric and dermatology guidance generally puts toddlers at two or three baths a week, plus one after a messy
+    day; bathing more often can dry the skin. Every 3 days fits that. Leave the time empty for no bath reminder.
+  </p>
+
   <h3 style="margin-top: 16px">Starting points</h3>
   <p class="muted">What the app assumes until it has learned from about a week of logging.</p>
   <div class="grid2">
@@ -228,7 +247,10 @@
   <hr class="soft" />
   <h3>Reminders on this phone</h3>
   {#if app.push === 'on'}
-    <p class="muted">On. This phone hears about the routine {app.settings.reminder_lead_min} min ahead, and when to wake him.</p>
+    <p class="muted">
+      On. This phone hears about the routine {app.settings.reminder_lead_min} min ahead, when to wake him, and when a
+      bath is due.
+    </p>
     <div class="row">
       <button onclick={test} disabled={pushBusy}>Send a test</button>
       <button class="ghost" onclick={turnOff} disabled={pushBusy}>Turn off</button>
@@ -245,7 +267,7 @@
   {:else if app.push === 'unsupported'}
     <p class="muted">This browser cannot receive reminders. Try the home-screen app in Safari or Chrome.</p>
   {:else}
-    <p class="muted">This build has no reminder key yet. See SETUP.md, step 6.</p>
+    <p class="muted">This build is not connected to Supabase, so reminders cannot work.</p>
   {/if}
   {#if pushMessage}<p class="muted">{pushMessage}</p>{/if}
 </dialog>

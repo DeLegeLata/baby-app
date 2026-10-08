@@ -14,8 +14,10 @@
     SLEEP_KINDS,
     type Mood,
     type Place,
+    type Activity,
     type SleepKind
   } from '../model';
+  import ActivityPicker from './ActivityPicker.svelte';
 
   let dialog = $state<HTMLDialogElement | null>(null);
   let kind = $state<SleepKind>('nap');
@@ -26,6 +28,7 @@
   let place = $state<Place | null>(null);
   let mood = $state<Mood | null>(null);
   let note = $state('');
+  let activities = $state<Activity[]>([]);
   let error = $state('');
   let confirming = $state(false);
 
@@ -56,6 +59,7 @@
     place = (src.place as Place | null) ?? null;
     mood = (src.mood as Mood | null) ?? null;
     note = (src.note as string | null) ?? '';
+    activities = [...((src.activities as Activity[] | undefined) ?? [])];
     error = '';
     confirming = false;
   }
@@ -107,7 +111,8 @@
       wakings: nightWakings,
       place,
       mood,
-      note: note.trim() || null
+      note: note.trim() || null,
+      activities
     });
     close();
   }
@@ -157,6 +162,9 @@
       <button style="margin-top: 8px" onclick={() => wakings.push({ start: asleep, end: '' })}>Add a waking</button>
     </div>
   {/if}
+
+  <label for="sleep-before">Before this sleep</label>
+  <ActivityPicker id="sleep-before" selected={activities} onchange={(next) => (activities = next)} />
 
   <label for="place">Where</label>
   <div class="chips" id="place" role="group">

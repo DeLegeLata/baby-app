@@ -5,7 +5,7 @@
   import { app } from '../state.svelte';
   import { ui } from '../ui.svelte';
   import { clock12, dur, keyLabel, longDate } from '../format';
-  import { OFF_LABEL } from '../model';
+  import { ACTIVITY_LABEL, OFF_LABEL } from '../model';
   import { averages, chartRows, dayStats, sleepBand } from '../engine';
   import { addDays, ageInMonths } from '../time';
   import SleepChart from './SleepChart.svelte';
@@ -104,7 +104,15 @@
               <td>{fmt(s.up, clock12)}</td>
               <td>{fmt(s.night, dur)}</td>
               <td>{fmt(s.total, dur)}</td>
-              <td>{[s.off ? OFF_LABEL[s.off] : '', s.note ?? ''].filter(Boolean).join('. ')}</td>
+              <td>
+                {[
+                  s.off ? OFF_LABEL[s.off] : '',
+                  s.activities.length ? `Before bed: ${s.activities.map((a) => ACTIVITY_LABEL[a].toLowerCase()).join(', ')}` : '',
+                  s.note ?? ''
+                ]
+                  .filter(Boolean)
+                  .join('. ')}
+              </td>
             </tr>
           {/each}
         </tbody>

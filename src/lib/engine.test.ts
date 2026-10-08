@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   History,
+  activityEffects,
+  bathEvents,
+  bathStatus,
+  type BathLike,
   chartRows,
   dayOf,
   dstBedtimeShift,
@@ -21,7 +25,7 @@ import {
   type SleepLike
 } from './engine';
 import { clockAt } from './format';
-import { DEFAULT_SETTINGS, type AppSettings, type SleepKind } from './model';
+import { DEFAULT_SETTINGS, settingsSchema, type Activity, type AppSettings, type SleepKind } from './model';
 import { addDays, atMinutes, parseClock, toMs } from './time';
 
 const TZ = 'America/Toronto';
@@ -56,11 +60,12 @@ function sleep(
 function input(
   sleeps: SleepLike[],
   now: string,
-  opts: { days?: DayLike[]; settings?: Partial<AppSettings>; birth_at?: string | null } = {}
+  opts: { days?: DayLike[]; settings?: Partial<AppSettings>; birth_at?: string | null; baths?: BathLike[] } = {}
 ): EngineInput {
   return {
     sleeps,
     days: opts.days ?? [],
+    baths: opts.baths ?? [],
     settings: { ...DEFAULT_SETTINGS, ...opts.settings },
     birth_at: opts.birth_at === undefined ? '2024-03-15T12:00:00Z' : opts.birth_at,
     now: toMs(now)
@@ -399,6 +404,120 @@ describe('fixes from review', () => {
     // 11 h for his age with no day sleep: enough at 7:15, so the 7:00 must-be-up decides
     expect(clock(plan.enoughAt)).toBe('7:15 a.m.');
     expect(clock(plan.wakeAt)).toBe('7:00 a.m.');
+  });
+});
+
+describe('what he did before sleep', () => {
+  /** A night on `date` with the given activities, settling time and waking. */
+  function night(date: string, activities: Activity[], settleMin: number, wakeMin: number, up: string) {
+    const inBed = '19:55';
+    const asleepAt = atMinutes(date, parseClock(inBed) + settleMin, TZ);
+    return {
+      ...sleep('night', date, '20:00', up, {
+        in_bed_at: t(date, inBed),
+        activities,
+        wakings: wakeMin ? [{ start: t(date, '+02:00'), end: t(date, `+02:${String(wakeMin).padStart(2, '0')}`) }] : []
+      }),
+      asleep_at: new Date(asleepAt).toISOString()
+    };
+  }
+
+  // Four calm nights with books and a bath, four with a screen: Oct 1 to Oct 8.
+  const calm = ['2026-10-01', '2026-10-03', '2026-10-05', '2026-10-07'].map((d) => night(d, ['books', 'bath'], 10, 0, '+06:35'));
+  const screen = ['2026-10-02', '2026-10-04', '2026-10-06', '2026-10-08'].map((d) => night(d, ['screen'], 25, 20, '+06:20'));
+
+  it('compares the nights with an activity against the nights without it', () => {
+    const { nights, effects } = activityEffects(input([...calm, ...screen], t('2026-10-09', '10:00')));
+    expect(nights).toBe(8);
+    const books = effects.find((e) => e.activity === 'books' && e.kind === 'night')!;
+    expect(books).toMatchObject({ withCount: 4, withoutCount: 4, enough: true });
+    expect(books.settle).toEqual({ with: 10, without: 25 });
+    // books: asleep 20:05 to 06:35 = 630 min; screen: 20:20 to 06:20 less 20 awake = 580 min
+    expect(books.length).toEqual({ with: 630, without: 580 });
+    expect(books.line).toBe(
+      'Books (4 nights with it, 4 without): fell asleep 15 min faster, 1.0 fewer night wakings a night and slept 50 min longer.'
+    );
+    const tv = effects.find((e) => e.activity === 'screen')!;
+    expect(tv.line).toBe(
+      'TV or screen (4 nights with it, 4 without): took 15 min longer to fall asleep, 1.0 more night wakings a night and slept 50 min less.'
+    );
+  });
+
+  it('only counts nights where something was recorded, and leaves out unusual days', () => {
+    const blank = sleep('night', '2026-09-30', '20:00', '+06:30');
+    const days: DayLike[] = [{ date: '2026-10-08', override: {}, off_tag: 'sick', no_nap: false, deleted_at: null }];
+    const { nights, effects } = activityEffects(input([blank, ...calm, ...screen], t('2026-10-09', '10:00'), { days }));
+    expect(nights).toBe(7);
+    expect(effects.find((e) => e.activity === 'screen')!.withCount).toBe(3);
+  });
+
+  it('waits for three nights each way before comparing', () => {
+    const few = [calm[0], calm[1], screen[0]];
+    const { effects } = activityEffects(input(few, t('2026-10-09', '10:00')));
+    const books = effects.find((e) => e.activity === 'books')!;
+    expect(books.enough).toBe(false);
+    expect(books.line).toBe(
+      'Books: 2 nights with it and 1 without so far. The comparison appears once there are at least 3 of each.'
+    );
+  });
+});
+
+describe('baths', () => {
+  const bath = (id: string, at: string): BathLike => ({ id, at, deleted_at: null });
+
+  it('is due when nothing is logged', () => {
+    const status = bathStatus(input([], t(THU, '10:00')));
+    expect(status).toMatchObject({ due: true, line: 'No bath logged yet.' });
+  });
+
+  it('falls due the set number of days after the last bath', () => {
+    const baths = [bath('b1', t('2026-10-05', '18:30'))];
+    const wed = bathStatus(input([], t('2026-10-07', '10:00'), { baths }));
+    expect(wed).toMatchObject({ due: false, daysSince: 2, dueOn: '2026-10-08' });
+    expect(wed.line).toBe('Last bath Monday, 2 days ago. Next one due tomorrow.');
+    const thu = bathStatus(input([], t(THU, '10:00'), { baths }));
+    expect(thu.due).toBe(true);
+    expect(thu.line).toBe('Last bath Monday, 3 days ago. Due today.');
+    const sat = bathStatus(input([], t(SAT, '10:00'), { baths }));
+    expect(sat.line).toBe('Last bath Monday, 5 days ago. Due since Thursday.');
+    const every2 = bathStatus(input([], t('2026-10-07', '10:00'), { baths, settings: { bath_every_days: 2 } }));
+    expect(every2.line).toBe('Last bath Monday, 2 days ago. Due today.');
+  });
+
+  it('counts a bath given as part of the bedtime routine, once', () => {
+    const routine = sleep('night', '2026-10-07', '20:10', '+06:30', { in_bed_at: t('2026-10-07', '19:50'), activities: ['bath', 'books'] });
+    const alone = bathStatus(input([routine], t(THU, '10:00')));
+    expect(alone.events).toHaveLength(1);
+    expect(alone.events[0].source).toBe('routine');
+    expect(alone.line).toBe('Last bath yesterday. Next one due Saturday.');
+    // The same bath logged in the tracker too: one bath, not two.
+    const both = bathEvents(input([routine], t(THU, '10:00'), { baths: [bath('b1', t('2026-10-07', '19:30'))] }));
+    expect(both.map((e) => e.source)).toEqual(['log']);
+  });
+
+  it('counts a bath the moment it is logged, though the clock moves by the minute', () => {
+    // The engine sees 19:30:00; "Bath done" was tapped at 19:30:40.
+    const justNow = bath('b2', new Date(toMs(t(THU, '19:30')) + 40_000).toISOString());
+    const status = bathStatus(input([], t(THU, '19:30'), { baths: [bath('b1', t('2026-10-05', '18:30')), justNow] }));
+    expect(status).toMatchObject({ due: false, line: 'Bath today. Next one due Sunday.' });
+  });
+
+  it('plans the bath reminder on a due day, and cancels it once a bath is in', () => {
+    const remind = (baths: BathLike[], settings: Partial<AppSettings> = {}) =>
+      plannedReminders(input([], t(THU, '10:00'), { baths, settings }), 'Sam').find((r) => r.kind === 'bath')!;
+    const due = remind([bath('b1', t('2026-10-05', '18:30'))]);
+    expect(clock(due.sendAt!)).toBe('5:00 p.m.');
+    expect(due).toMatchObject({ date: THU, title: 'Bath day for Sam', body: 'Last bath Monday, 3 days ago. Due today.' });
+    expect(remind([bath('b1', t('2026-10-05', '18:30')), bath('b2', t(THU, '09:00'))]).sendAt).toBeNull();
+    expect(remind([bath('b1', t('2026-10-05', '18:30'))], { bath_remind_at: null }).sendAt).toBeNull();
+  });
+
+  it('still loads settings saved before the bath settings existed', () => {
+    const { bath_every_days, bath_remind_at, ...older } = DEFAULT_SETTINGS;
+    const saved = { ...older, usual_bedtime: '20:40', schedule: { ...older.schedule, must_be_up: '06:45' } };
+    const parsed = settingsSchema.parse(saved);
+    expect(parsed).toMatchObject({ bath_every_days: 3, bath_remind_at: '17:00', usual_bedtime: '20:40' });
+    expect(parsed.schedule.must_be_up).toBe('06:45');
   });
 });
 

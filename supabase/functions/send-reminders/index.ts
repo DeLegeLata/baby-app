@@ -4,22 +4,46 @@
 // 20 minutes overdue is dropped rather than sent late.
 //
 // Deploy with JWT verification off; the request is checked against the
-// reminder secret in the database instead. Secrets the function needs:
-//   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT (a mailto: address)
-//   SERVICE_KEY, only if SUPABASE_SERVICE_ROLE_KEY is not provided automatically
+// reminder secret in the database instead. Nothing else needs setting up: on
+// its first run the function makes the VAPID keys that sign the notifications
+// and keeps them in push_keys, where the phones read the public half.
+// Optional secrets: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (used instead of
+// push_keys when both are set), VAPID_SUBJECT (defaults to the project URL),
+// and SERVICE_KEY (only if SUPABASE_SERVICE_ROLE_KEY is not provided).
 import webpush from 'npm:web-push@3.6.7';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 const STALE_MIN = 20;
 
 const url = Deno.env.get('SUPABASE_URL')!;
 const key = Deno.env.get('SERVICE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-webpush.setVapidDetails(
-  Deno.env.get('VAPID_SUBJECT') ?? 'mailto:reminders@example.com',
-  Deno.env.get('VAPID_PUBLIC_KEY')!,
-  Deno.env.get('VAPID_PRIVATE_KEY')!
-);
+type Keys = { publicKey: string; privateKey: string };
+
+/** The VAPID keys: from the secrets if both are set, else from push_keys, made on first use. */
+async function vapidKeys(db: SupabaseClient): Promise<Keys> {
+  const publicKey = Deno.env.get('VAPID_PUBLIC_KEY');
+  const privateKey = Deno.env.get('VAPID_PRIVATE_KEY');
+  if (publicKey && privateKey) return { publicKey, privateKey };
+
+  const stored = async (): Promise<Keys | null> => {
+    const { data, error } = await db.from('push_keys').select('public_key,private_key').eq('id', 1).maybeSingle();
+    if (error) throw error;
+    return data ? { publicKey: data.public_key, privateKey: data.private_key } : null;
+  };
+  const existing = await stored();
+  if (existing) return existing;
+
+  const made = webpush.generateVAPIDKeys();
+  const { error } = await db
+    .from('push_keys')
+    .insert({ id: 1, public_key: made.publicKey, private_key: made.privateKey });
+  if (!error) return made;
+  // Another run made them first: use those, so every phone shares one key.
+  const winner = await stored();
+  if (!winner) throw error;
+  return winner;
+}
 
 type Reminder = {
   household_id: string;
@@ -40,6 +64,14 @@ Deno.serve(async (req) => {
   });
   if (secretError) return Response.json({ error: secretError.message }, { status: 500 });
   if (allowed !== true) return new Response('forbidden', { status: 403 });
+
+  try {
+    const keys = await vapidKeys(db);
+    // The subject tells the push services who is sending: an https or mailto address.
+    webpush.setVapidDetails(Deno.env.get('VAPID_SUBJECT') ?? url, keys.publicKey, keys.privateKey);
+  } catch (e) {
+    return Response.json({ error: `push keys: ${(e as Error).message}` }, { status: 500 });
+  }
 
   const now = new Date();
   const { data: due, error } = await db
