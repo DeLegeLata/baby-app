@@ -25,12 +25,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      # Both values are public by design: the publishable key only reaches what
-      # row-level security allows. The secret key never appears here.
+      # These values are public by design: the publishable key only reaches what
+      # row-level security allows, and the VAPID public key is meant to be shared.
+      # The secret key and the VAPID private key never appear here.
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

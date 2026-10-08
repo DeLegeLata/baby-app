@@ -1,9 +1,10 @@
 <script lang="ts">
-  // Both phones edited the same entry while offline. Show both versions and let
-  // whoever is holding the phone settle it.
+  // Both phones edited the same sleep or date while offline. Show both versions
+  // and let whoever is holding the phone settle it.
   import { app } from '../state.svelte';
-  import { clock, mmss } from '../format';
-  import type { Entry, EntryRow } from '../model';
+  import { clockAt, dur, keyLabel } from '../format';
+  import { KIND_LABEL, OFF_LABEL, type DayRow, type Sleep } from '../model';
+  import { netSleepMinutes } from '../engine';
 
   let dialog = $state<HTMLDialogElement | null>(null);
   const conflict = $derived(app.conflicts[0] ?? null);
@@ -13,14 +14,20 @@
     else dialog?.close();
   });
 
-  function describe(entry: Entry | EntryRow): string {
-    const when = clock(entry.started_at, app.settings);
-    if (entry.kind === 'diaper') {
-      const bits = [entry.wet ? 'wet' : null, entry.dirty ? 'dirty' : null].filter(Boolean);
-      return `${when} - ${bits.join(' + ') || 'diaper'}${entry.stool_color ? `, colour ${entry.stool_color}` : ''}`;
+  function describe(row: Sleep | DayRow): string {
+    const tz = app.settings.time_zone;
+    if ('kind' in row) {
+      const start = row.asleep_at ?? row.in_bed_at;
+      const from = start ? clockAt(Date.parse(start), tz) : '?';
+      const to = row.woke_at ? ` to ${clockAt(Date.parse(row.woke_at), tz)}` : '';
+      const length = row.asleep_at ? `, ${dur(netSleepMinutes(row, app.now))}` : '';
+      return `${KIND_LABEL[row.kind]} ${from}${to}${length}${row.deleted_at ? ' (deleted)' : ''}`;
     }
-    if (entry.feed_method === 'bottle') return `${when} - bottle ${entry.bottle_ml ?? 0} ml`;
-    return `${when} - nursing L ${mmss(entry.left_sec ?? 0)} / R ${mmss(entry.right_sec ?? 0)}`;
+    const bits = [keyLabel(row.date)];
+    if (row.off_tag) bits.push(OFF_LABEL[row.off_tag]);
+    if (Object.keys(row.override).length) bits.push('schedule changed');
+    if (row.no_nap) bits.push('no nap at daycare');
+    return bits.join(', ');
   }
 </script>
 
@@ -28,7 +35,7 @@
   {#if conflict}
     <h3>Changed on the other phone</h3>
     <p class="muted">
-      This entry was edited in both places while you were offline. Pick the one to keep.
+      This was edited in both places while one phone was offline. Pick the one to keep.
     </p>
 
     <button style="width: 100%" onclick={() => app.resolve(conflict, 'local')}>

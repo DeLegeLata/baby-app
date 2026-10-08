@@ -1,157 +1,214 @@
-// Entry shapes and settings. The columns mirror the Supabase tables in
-// supabase/schema.sql, so an entry can be uploaded as-is.
+// Sleep records, per-date changes and settings. The columns mirror the
+// Supabase tables in supabase/schema.sql, so a row can be uploaded as-is.
 import { z } from 'zod';
-import { DEFAULT_SETTINGS, type Settings } from './rule';
+import { CLOCK_PATTERN, parseClock, type DateKey } from './time';
 
 export const SCHEMA_VERSION = 1;
 
-export type Kind = 'feed' | 'diaper';
-export type Side = 'left' | 'right';
-export type FeedMethod = 'nursing' | 'bottle';
-export type MilkType = 'breast' | 'formula';
+export type SleepKind = 'night' | 'nap' | 'catnap';
+export const SLEEP_KINDS: SleepKind[] = ['night', 'nap', 'catnap'];
 
-export type Entry = {
-  id: string;
+export const PLACES = ['bed', 'daycare', 'car', 'stroller', 'parents_bed', 'other'] as const;
+export type Place = (typeof PLACES)[number];
+
+export const MOODS = ['happy', 'fine', 'grumpy'] as const;
+export type Mood = (typeof MOODS)[number];
+
+export const OFF_TAGS = ['sick', 'teething', 'travel', 'other'] as const;
+export type OffTag = (typeof OFF_TAGS)[number];
+
+export const KIND_LABEL: Record<SleepKind, string> = { night: 'Night', nap: 'Nap', catnap: 'Catnap' };
+export const PLACE_LABEL: Record<Place, string> = {
+  bed: 'Bed',
+  daycare: 'Daycare',
+  car: 'Car',
+  stroller: 'Stroller',
+  parents_bed: "Our bed",
+  other: 'Other'
+};
+export const MOOD_LABEL: Record<Mood, string> = { happy: 'Happy', fine: 'Fine', grumpy: 'Grumpy' };
+export const OFF_LABEL: Record<OffTag, string> = {
+  sick: 'Sick',
+  teething: 'Teething',
+  travel: 'Travel',
+  other: 'Unusual day'
+};
+
+/** A night waking. `end` is null while he is still awake. */
+export type Waking = { start: string; end: string | null };
+
+type SyncFields = {
   household_id: string;
-  baby_id: string;
-  kind: Kind;
-  started_at: string;
-  ended_at: string | null;
+  child_id: string;
   logged_by: string;
   rev: number;
   updated_at: string;
   deleted_at: string | null;
   schema_version: number;
-  epoch: number;
-  // feeds
-  feed_method: FeedMethod | null;
-  left_sec: number | null;
-  right_sec: number | null;
-  last_side: Side | null;
-  bottle_ml: number | null;
-  milk_type: MilkType | null;
-  // diapers
-  wet: boolean | null;
-  dirty: boolean | null;
-  stool_color: number | null;
-  note: string | null;
-  // local only, never uploaded
+  /** local only, never uploaded */
   synced: 0 | 1;
 };
 
-export const UPLOAD_COLUMNS = [
+export type Sleep = SyncFields & {
+  id: string;
+  kind: SleepKind;
+  /** when he went into bed; null if not recorded */
+  in_bed_at: string | null;
+  /** null while he is in bed but not yet asleep */
+  asleep_at: string | null;
+  /** null while the sleep is still running */
+  woke_at: string | null;
+  wakings: Waking[];
+  place: Place | null;
+  mood: Mood | null;
+  note: string | null;
+};
+
+export type NoSleepWindow = { start: string; end: string; label: string };
+
+/**
+ * One-off changes for a date. A key that is present replaces the template for
+ * that day; a null value means "none that day" (no must-be-up, no nap).
+ */
+export type DayOverride = {
+  must_be_up?: string | null;
+  nap_start?: string | null;
+  nap_end?: string | null;
+  latest_bedtime?: string | null;
+  no_sleep?: NoSleepWindow[];
+  daycare?: boolean;
+};
+
+export type DayRow = SyncFields & {
+  /** `${child_id}:${date}`, so both phones address the same row */
+  id: string;
+  date: DateKey;
+  override: DayOverride;
+  /** an unusual day: still shown, but left out of the learning */
+  off_tag: OffTag | null;
+  /** daycare reported that he did not nap */
+  no_nap: boolean;
+  note: string | null;
+};
+
+export const dayId = (childId: string, date: DateKey) => `${childId}:${date}`;
+
+export const SLEEP_COLUMNS = [
   'id',
   'household_id',
-  'baby_id',
+  'child_id',
   'kind',
-  'started_at',
-  'ended_at',
+  'in_bed_at',
+  'asleep_at',
+  'woke_at',
+  'wakings',
+  'place',
+  'mood',
+  'note',
   'logged_by',
   'rev',
   'updated_at',
   'deleted_at',
-  'schema_version',
-  'epoch',
-  'feed_method',
-  'left_sec',
-  'right_sec',
-  'last_side',
-  'bottle_ml',
-  'milk_type',
-  'wet',
-  'dirty',
-  'stool_color',
-  'note'
+  'schema_version'
 ] as const;
 
-/** The row shape that goes to Supabase: an entry without its local-only fields. */
-export type EntryRow = Omit<Entry, 'synced'>;
+export const DAY_COLUMNS = [
+  'id',
+  'household_id',
+  'child_id',
+  'date',
+  'override',
+  'off_tag',
+  'no_nap',
+  'note',
+  'logged_by',
+  'rev',
+  'updated_at',
+  'deleted_at',
+  'schema_version'
+] as const;
 
-export function toRow(entry: Entry): EntryRow {
+export function toRow<T extends Record<string, unknown>>(record: T, columns: readonly string[]) {
   const row = {} as Record<string, unknown>;
-  for (const column of UPLOAD_COLUMNS) row[column] = entry[column];
-  return row as EntryRow;
+  for (const column of columns) row[column] = record[column];
+  return row;
 }
 
-/** Expected diapers for a day of life. The last row covers every later day. */
-export const expectedDiapersSchema = z.array(
-  z.object({ day: z.number().int().min(1), wet: z.number().int().min(0), dirty: z.number().int().min(0) })
-);
+// --- Settings -----------------------------------------------------------------
+
+/** Every time on screen runs through Intl, which throws on an unknown zone. */
+function isTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: zone });
+    return zone.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const clock = z.string().regex(CLOCK_PATTERN, 'Use a 24-hour time such as 07:00');
+
+const windowSchema = z.object({
+  start: clock,
+  end: clock,
+  label: z.string().max(40)
+});
+
+export const scheduleSchema = z
+  .object({
+    must_be_up: clock.nullable(),
+    nap_start: clock.nullable(),
+    nap_end: clock.nullable(),
+    latest_bedtime: clock.nullable(),
+    no_sleep: z.array(windowSchema)
+  })
+  .superRefine((s, ctx) => {
+    if ((s.nap_start === null) !== (s.nap_end === null)) {
+      ctx.addIssue({ code: 'custom', message: 'Give the nap window both a start and an end' });
+    } else if (s.nap_start && s.nap_end && parseClock(s.nap_end) <= parseClock(s.nap_start)) {
+      ctx.addIssue({ code: 'custom', message: 'The nap window must end after it starts' });
+    }
+  });
+
+export type Schedule = z.infer<typeof scheduleSchema>;
 
 export const settingsSchema = z.object({
-  // the timer rule
-  target_min: z.number().int().positive(),
-  max_gap_min: z.number().int().positive(),
-  merge_gap_min: z.number().int().min(0),
-  max_session_min: z.number().int().positive(),
-  running_prompt_min: z.number().int().positive(),
-  emergency_retry_min: z.number().int().positive(),
-  emergency_max_min: z.number().int().positive(),
-  back_to_birth_weight: z.boolean(),
-  time_zone: z.string().min(1),
-  // health, seeded from research 02 and 06; the doctor numbers overwrite them
-  vitamin_d_iu: z.number().int().positive(),
-  fever_c: z.number(),
-  diaper_guide_days: z.number().int().positive(),
-  expected_diapers: expectedDiapersSchema,
-  flagged_stool_colors: z.array(z.number().int().min(1).max(9)),
-  // household
-  units: z.literal('ml')
+  schedule: scheduleSchema,
+  /** ISO weekdays he is at daycare (Monday is 1) */
+  daycare_days: z.array(z.number().int().min(1).max(7)),
+  routine_min: z.number().int().min(0).max(120),
+  /** starting point for how long he takes to fall asleep, until the app learns it */
+  settle_min: z.number().int().min(0).max(90),
+  /** starting points for his usual night, until the app learns them */
+  usual_bedtime: clock,
+  usual_wake: clock,
+  reminder_lead_min: z.number().int().min(0).max(120),
+  time_zone: z.string().refine(isTimeZone, 'Use a time zone name such as America/Toronto'),
+  night_look: z.enum(['auto', 'off']),
+  /** when the settings last changed on either phone; the newer copy wins */
+  updated_at: z.string()
 });
 
 export type AppSettings = z.infer<typeof settingsSchema>;
 
-export const DEFAULT_APP_SETTINGS: AppSettings = {
-  ...DEFAULT_SETTINGS,
-  vitamin_d_iu: 400,
-  fever_c: 38.0,
-  diaper_guide_days: 14,
-  expected_diapers: [
-    { day: 1, wet: 1, dirty: 1 },
-    { day: 2, wet: 2, dirty: 1 },
-    { day: 3, wet: 3, dirty: 3 },
-    { day: 4, wet: 4, dirty: 3 },
-    { day: 5, wet: 6, dirty: 2 }
-  ],
-  flagged_stool_colors: [1, 2, 3, 4, 5, 6],
-  units: 'ml'
+// The schedule times are placeholders until the real daycare times go in.
+export const DEFAULT_SETTINGS: AppSettings = {
+  schedule: {
+    must_be_up: '07:00',
+    nap_start: '12:30',
+    nap_end: '14:30',
+    latest_bedtime: '20:30',
+    no_sleep: []
+  },
+  daycare_days: [1, 2, 3, 4, 5],
+  routine_min: 20,
+  settle_min: 15,
+  usual_bedtime: '20:15',
+  usual_wake: '06:30',
+  reminder_lead_min: 30,
+  time_zone: 'America/Toronto',
+  night_look: 'auto',
+  updated_at: '1970-01-01T00:00:00.000Z'
 };
 
-/** The timer rule only needs its own fields. */
-export function ruleSettings(settings: AppSettings): Settings {
-  const {
-    target_min,
-    max_gap_min,
-    merge_gap_min,
-    max_session_min,
-    running_prompt_min,
-    emergency_retry_min,
-    emergency_max_min,
-    back_to_birth_weight,
-    time_zone
-  } = settings;
-  return {
-    target_min,
-    max_gap_min,
-    merge_gap_min,
-    max_session_min,
-    running_prompt_min,
-    emergency_retry_min,
-    emergency_max_min,
-    back_to_birth_weight,
-    time_zone
-  };
-}
-
-export function expectedFor(settings: AppSettings, dayOfLife: number): { wet: number; dirty: number } | null {
-  if (dayOfLife < 1 || dayOfLife > settings.diaper_guide_days) return null;
-  const rows = [...settings.expected_diapers].sort((a, b) => a.day - b.day);
-  let match = rows[0];
-  for (const row of rows) if (row.day <= dayOfLife) match = row;
-  return match ? { wet: match.wet, dirty: match.dirty } : null;
-}
-
-/** British Columbia stool colour card: 1-6 abnormal, 7-9 normal. */
-export function stoolFlagged(settings: AppSettings, colour: number | null): boolean {
-  return colour !== null && settings.flagged_stool_colors.includes(colour);
-}
+export type Child = { name: string; birth_at: string | null };

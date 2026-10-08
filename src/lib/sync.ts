@@ -1,105 +1,147 @@
-// The outbox, the pull and realtime. New entries never conflict because the
-// phone makes their ids; an edit carries its rev, and a stale edit is handed
-// back to the screen as a conflict.
+// The outbox, the pull and realtime, for the sleeps and the per-date changes.
+// New sleeps never conflict because the phone makes their ids; an edit carries
+// its rev, and a stale edit is handed back to the screen as a conflict. A date
+// has one fixed id, so both phones address the same row.
+import type { Table } from 'dexie';
 import { db, getMeta, setMeta } from './db';
-import { toRow, type Entry, type EntryRow } from './model';
+import {
+  DAY_COLUMNS,
+  SLEEP_COLUMNS,
+  settingsSchema,
+  toRow,
+  type AppSettings,
+  type Child,
+  type DayRow,
+  type Sleep
+} from './model';
 import { supabase } from './supabase';
 
-export type Conflict = { local: Entry; remote: EntryRow };
+export type TableName = 'sleeps' | 'days';
+type Row = Sleep | DayRow;
 
-const LAST_PULL = 'last_pull_at';
+const COLUMNS: Record<TableName, readonly string[]> = { sleeps: SLEEP_COLUMNS, days: DAY_COLUMNS };
+const TABLES: TableName[] = ['sleeps', 'days'];
 
-function fromRow(row: EntryRow): Entry {
-  return { ...row, synced: 1 } as Entry;
+const local = (table: TableName) => (table === 'sleeps' ? db.sleeps : db.days) as unknown as Table<Row, string>;
+
+export type Conflict = { table: TableName; local: Row; remote: Row };
+
+const lastPullKey = (table: TableName) => `last_pull_${table}`;
+
+function fromRow(row: Record<string, unknown>): Row {
+  return { ...row, synced: 1 } as Row;
 }
 
 /** Apply a row from the server unless the phone holds a newer revision. */
-async function applyRow(row: EntryRow): Promise<void> {
-  const local = await db.entries.get(row.id);
-  if (local && local.rev > row.rev) return; // our own newer edit wins until it uploads
-  if (local && local.synced === 0 && local.rev === row.rev) return;
-  await db.entries.put(fromRow(row));
+async function applyRow(table: TableName, row: Record<string, unknown>): Promise<void> {
+  const mine = await local(table).get(row.id as string);
+  if (mine && mine.rev > (row.rev as number)) return; // our own newer edit wins until it uploads
+  if (mine && mine.synced === 0 && mine.rev === row.rev) return;
+  await local(table).put(fromRow(row));
 }
 
 export async function pushOutbox(): Promise<Conflict[]> {
   if (!supabase) return [];
-  const pending = await db.entries.where('synced').equals(0).toArray();
   const conflicts: Conflict[] = [];
 
-  for (const entry of pending) {
-    const row = toRow(entry);
+  for (const table of TABLES) {
+    const pending = await local(table).where('synced').equals(0).toArray();
+    for (const record of pending) {
+      const row = toRow(record as unknown as Record<string, unknown>, COLUMNS[table]);
 
-    if (entry.rev === 1) {
-      const { error } = await supabase.from('entries').insert(row);
-      if (!error) {
-        await db.entries.put({ ...entry, synced: 1 });
+      if (record.rev === 1) {
+        const { error } = await supabase.from(table).insert(row);
+        if (!error) {
+          await local(table).put({ ...record, synced: 1 });
+          continue;
+        }
+        // 23505 is a duplicate id: the row is already up there, so fall through to the edit path.
+        if (error.code !== '23505') throw error;
+      }
+
+      const { data, error } = await supabase
+        .from(table)
+        .update(row)
+        .eq('id', record.id)
+        .lt('rev', record.rev)
+        .select();
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        await local(table).put({ ...record, synced: 1 });
         continue;
       }
-      // 23505 is a duplicate id: the row is already up there, so fall through to the edit path.
-      if (error.code !== '23505') throw error;
-    }
 
-    const { data, error } = await supabase
-      .from('entries')
-      .update(row)
-      .eq('id', entry.id)
-      .lt('rev', entry.rev)
-      .select();
-    if (error) throw error;
-
-    if (data && data.length > 0) {
-      await db.entries.put({ ...entry, synced: 1 });
-      continue;
-    }
-
-    // Nothing updated: either the row is missing, or the other phone is ahead.
-    const { data: remote } = await supabase.from('entries').select('*').eq('id', entry.id).maybeSingle();
-    if (!remote) {
-      const { error: insertError } = await supabase.from('entries').insert(row);
-      if (insertError) throw insertError;
-      await db.entries.put({ ...entry, synced: 1 });
-    } else {
-      conflicts.push({ local: entry, remote: remote as EntryRow });
+      // Nothing updated: either the row is missing, or the other phone is ahead.
+      const { data: remote } = await supabase.from(table).select('*').eq('id', record.id).maybeSingle();
+      if (!remote) {
+        const { error: insertError } = await supabase.from(table).insert(row);
+        if (insertError) throw insertError;
+        await local(table).put({ ...record, synced: 1 });
+      } else if (record.rev === 1 && table === 'days') {
+        // Both phones made the same date's row: take theirs and re-apply ours on top.
+        const theirs = remote as DayRow;
+        const merged = { ...theirs, ...pickDay(record as DayRow), rev: theirs.rev + 1, synced: 0 as const };
+        await local(table).put(merged);
+        await pushOne(table, merged);
+      } else {
+        conflicts.push({ table, local: record, remote: fromRow(remote) });
+      }
     }
   }
   return conflicts;
 }
 
+function pickDay(d: DayRow) {
+  return { override: d.override, off_tag: d.off_tag, no_nap: d.no_nap, note: d.note, updated_at: new Date().toISOString() };
+}
+
+async function pushOne(table: TableName, record: Row) {
+  if (!supabase) return;
+  const row = toRow(record as unknown as Record<string, unknown>, COLUMNS[table]);
+  const { data, error } = await supabase.from(table).update(row).eq('id', record.id).lt('rev', record.rev).select();
+  if (error) throw error;
+  if (data && data.length) await local(table).put({ ...record, synced: 1 });
+}
+
 export async function pullChanges(householdId: string): Promise<number> {
   if (!supabase) return 0;
-  const since = await getMeta<string>(LAST_PULL, '1970-01-01T00:00:00.000Z');
-  const { data, error } = await supabase
-    .from('entries')
-    .select('*')
-    .eq('household_id', householdId)
-    .gt('updated_at', since)
-    .order('updated_at', { ascending: true });
-  if (error) throw error;
-
-  for (const row of (data ?? []) as EntryRow[]) await applyRow(row);
-  if (data && data.length) await setMeta(LAST_PULL, data[data.length - 1].updated_at);
-  return data?.length ?? 0;
+  let count = 0;
+  for (const table of TABLES) {
+    const since = await getMeta<string>(lastPullKey(table), '1970-01-01T00:00:00.000Z');
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('household_id', householdId)
+      .gt('updated_at', since)
+      .order('updated_at', { ascending: true });
+    if (error) throw error;
+    for (const row of data ?? []) await applyRow(table, row);
+    if (data && data.length) await setMeta(lastPullKey(table), data[data.length - 1].updated_at);
+    count += data?.length ?? 0;
+  }
+  return count;
 }
 
 /** Live updates while both apps are open. */
 export function subscribeRealtime(householdId: string, onChange: () => void) {
   const client = supabase;
   if (!client) return () => {};
-  const channel = client
-    .channel(`entries:${householdId}`)
-    .on(
+  let channel = client.channel(`sleep:${householdId}`);
+  for (const table of TABLES) {
+    channel = channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'entries', filter: `household_id=eq.${householdId}` },
+      { event: '*', schema: 'public', table, filter: `household_id=eq.${householdId}` },
       async (payload) => {
-        const row = payload.new as EntryRow;
+        const row = payload.new as Record<string, unknown>;
         if (row?.id) {
-          await applyRow(row);
+          await applyRow(table, row);
           onChange();
         }
       }
-    )
-    .subscribe();
-
+    );
+  }
+  channel.subscribe();
   return () => {
     void client.removeChannel(channel);
   };
@@ -108,13 +150,60 @@ export function subscribeRealtime(householdId: string, onChange: () => void) {
 /** Conflict resolution: keep this phone's version, or the other phone's. */
 export async function resolveConflict(conflict: Conflict, keep: 'local' | 'remote'): Promise<void> {
   if (keep === 'remote') {
-    await db.entries.put(fromRow(conflict.remote));
+    await local(conflict.table).put({ ...conflict.remote, synced: 1 });
     return;
   }
-  const winner: Entry = { ...conflict.local, rev: conflict.remote.rev + 1, synced: 0 };
-  await db.entries.put(winner);
+  const winner: Row = { ...conflict.local, rev: conflict.remote.rev + 1, synced: 0 };
+  await local(conflict.table).put(winner);
   await pushOutbox();
 }
+
+// --- Settings, shared through the household row -------------------------------------
+
+export async function pullSettings(householdId: string): Promise<AppSettings | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('households').select('settings').eq('id', householdId).maybeSingle();
+  if (error) throw error;
+  const parsed = settingsSchema.safeParse((data?.settings as Record<string, unknown> | null)?.sleep);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function pushSettings(householdId: string, settings: AppSettings): Promise<void> {
+  if (!supabase) return;
+  const { data, error } = await supabase.from('households').select('settings').eq('id', householdId).maybeSingle();
+  if (error) throw error;
+  const merged = { ...((data?.settings as Record<string, unknown>) ?? {}), sleep: settings };
+  const { error: updateError } = await supabase
+    .from('households')
+    .update({ settings: merged, time_zone: settings.time_zone })
+    .eq('id', householdId);
+  if (updateError) throw updateError;
+}
+
+// --- The child -------------------------------------------------------------------------
+
+export type RemoteChild = Child & { id: string };
+
+/** The toddler's row; the newborn's row (role 'baby') is left as it was. */
+export async function fetchChild(householdId: string): Promise<RemoteChild | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('babies')
+    .select('id,name,birth_at')
+    .eq('household_id', householdId)
+    .eq('role', 'toddler')
+    .maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id as string, name: data.name as string, birth_at: data.birth_at as string | null } : null;
+}
+
+export async function pushChild(childId: string, child: Child): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.from('babies').update({ name: child.name, birth_at: child.birth_at }).eq('id', childId);
+  if (error) throw error;
+}
+
+// --- Presence ----------------------------------------------------------------------------
 
 /** Say hello so the other phone can show when this one last synced. */
 export async function touchMember(householdId: string, userId: string): Promise<void> {
