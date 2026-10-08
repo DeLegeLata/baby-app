@@ -90,6 +90,9 @@
         if (end && Date.parse(end) <= Date.parse(start)) {
           return void (error = 'A night waking ends before it starts.');
         }
+        if (!end && wokeAt) {
+          return void (error = 'Give each waking a back-asleep time, or leave "Up for the day" empty.');
+        }
         if (wokeAt && (Date.parse(start) >= Date.parse(wokeAt) || (end && Date.parse(end) > Date.parse(wokeAt)))) {
           return void (error = 'A night waking runs past the morning wake.');
         }

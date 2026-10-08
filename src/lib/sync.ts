@@ -79,9 +79,9 @@ export async function pushOutbox(): Promise<Conflict[]> {
         if (insertError) throw insertError;
         await local(table).put({ ...record, synced: 1 });
       } else if (record.rev === 1 && table === 'days') {
-        // Both phones made the same date's row: take theirs and re-apply ours on top.
+        // Both phones made the same date's row: keep theirs, with what this phone set laid on top.
         const theirs = remote as DayRow;
-        const merged = { ...theirs, ...pickDay(record as DayRow), rev: theirs.rev + 1, synced: 0 as const };
+        const merged = { ...theirs, ...pickDay(theirs, record as DayRow), rev: theirs.rev + 1, synced: 0 as const };
         await local(table).put(merged);
         await pushOne(table, merged);
       } else {
@@ -92,8 +92,15 @@ export async function pushOutbox(): Promise<Conflict[]> {
   return conflicts;
 }
 
-function pickDay(d: DayRow) {
-  return { override: d.override, off_tag: d.off_tag, no_nap: d.no_nap, note: d.note, updated_at: new Date().toISOString() };
+/** Only the fields this phone actually set; the rest stay as the other phone left them. */
+function pickDay(theirs: DayRow, mine: DayRow) {
+  return {
+    override: { ...theirs.override, ...mine.override },
+    off_tag: mine.off_tag ?? theirs.off_tag,
+    no_nap: mine.no_nap || theirs.no_nap,
+    note: mine.note ?? theirs.note,
+    updated_at: new Date().toISOString()
+  };
 }
 
 async function pushOne(table: TableName, record: Row) {

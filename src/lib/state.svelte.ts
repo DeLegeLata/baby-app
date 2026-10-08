@@ -22,6 +22,7 @@ import {
   History,
   dayOf,
   guessKind,
+  learn,
   phaseOf,
   planBedtime,
   planWake,
@@ -110,6 +111,9 @@ class AppState {
   bedtime = $derived<BedtimePlan | null>(
     this.current?.kind === 'night' ? null : planBedtime(this.input, this.today)
   );
+  /** how long he usually takes to fall asleep, as learned */
+  settle = $derived(Math.round(learn(this.history, this.today).settle));
+
   wake = $derived<WakePlan | null>(
     this.current?.kind === 'night' ? planWake(this.input, this.current) : null
   );
@@ -217,6 +221,10 @@ class AppState {
       previous.child_id !== next.child_id ||
       previous.user_id !== next.user_id
     ) {
+      // Rows already up there for this household are left alone; only rows
+      // logged before sign-in (or for another household) are re-pointed and queued.
+      const stays = (row: { household_id: string; child_id: string; logged_by: string }) =>
+        row.household_id === next.household_id && row.child_id === next.child_id && row.logged_by !== 'local';
       const repoint = <T extends { household_id: string; child_id: string; logged_by: string }>(row: T): T => ({
         ...row,
         household_id: next.household_id,
@@ -224,10 +232,10 @@ class AppState {
         logged_by: row.logged_by === 'local' ? next.user_id : row.logged_by,
         synced: 0 as const
       });
-      const sleeps = await db.sleeps.toArray();
+      const sleeps = (await db.sleeps.toArray()).filter((s) => !stays(s));
       await db.sleeps.bulkPut(sleeps.map(repoint));
       // A date's id carries the child id, so those rows are re-keyed.
-      const days = await db.days.toArray();
+      const days = (await db.days.toArray()).filter((d) => !stays(d));
       await db.days.bulkDelete(days.map((d) => d.id));
       await db.days.bulkPut(days.map((d) => ({ ...repoint(d), id: dayId(next.child_id, d.date) })));
     }
