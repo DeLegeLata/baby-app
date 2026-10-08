@@ -4,6 +4,7 @@ import {
   activityEffects,
   bathEvents,
   bathStatus,
+  daycareEntry,
   type BathLike,
   chartRows,
   dayOf,
@@ -518,6 +519,39 @@ describe('baths', () => {
     const parsed = settingsSchema.parse(saved);
     expect(parsed).toMatchObject({ bath_every_days: 3, bath_remind_at: '17:00', usual_bedtime: '20:40' });
     expect(parsed.schedule.must_be_up).toBe('06:45');
+  });
+});
+
+describe('the daycare card', () => {
+  const min = (clock: string) => parseClock(clock);
+
+  it('treats times still to come as the plan, and finished ones as what happened', () => {
+    const before = daycareEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '09:00')), TZ);
+    expect(before.kind).toBe('plan');
+    const during = daycareEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '14:00')), TZ);
+    expect(during.kind).toBe('plan');
+    const after = daycareEntry(THU, min('12:45'), min('14:10'), toMs(t(THU, '17:00')), TZ);
+    expect(after).toMatchObject({ kind: 'actual', startAt: toMs(t(THU, '12:45')), endAt: toMs(t(THU, '14:10')) });
+  });
+
+  it('refuses a nap that ends before it starts', () => {
+    expect(daycareEntry(THU, min('14:00'), min('13:00'), toMs(t(THU, '17:00')), TZ)).toEqual({
+      kind: 'error',
+      message: 'The nap has to end after it starts.'
+    });
+  });
+
+  it('moves tonight\'s bedtime with a changed plan, then with the report', () => {
+    // Daycare says at drop-off: nap 1:00 to 3:00 today. Bedtime assumes that window.
+    const days: DayLike[] = [
+      { date: THU, override: { nap_start: '13:00', nap_end: '15:00' }, off_tag: null, no_nap: false, deleted_at: null }
+    ];
+    const planned = planBedtime(input([], t(THU, '09:00'), { days }));
+    expect(clock(planned.asleepBy)).toBe('8:30 p.m.'); // ends 30 min after the usual: 15 min later, capped at 8:30
+    // At pickup the report says 1:10 to 2:00: the real nap takes over. It ended 30 min
+    // before the usual 2:30 (15 min earlier) and day sleep was 70 min short (18 min earlier).
+    const reported = planBedtime(input([sleep('nap', THU, '13:10', '14:00')], t(THU, '17:00'), { days }));
+    expect(clock(reported.asleepBy)).toBe('7:42 p.m.');
   });
 });
 

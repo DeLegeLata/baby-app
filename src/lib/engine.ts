@@ -1306,6 +1306,30 @@ export function bathStatus(input: EngineInput, today?: DateKey): BathStatus {
   return { events, last, daysSince, dueOn, due, line: when + next };
 }
 
+// --- The daycare nap, as typed on the Daycare card ----------------------------------------------
+
+export type DaycareEntry =
+  | { kind: 'plan' | 'actual'; startAt: number; endAt: number }
+  | { kind: 'error'; message: string };
+
+/**
+ * Nap times typed on the Daycare card. While the nap has not finished they are
+ * today's plan (the window tonight's bedtime assumes); once it is over they are
+ * what happened, from the daycare's report.
+ */
+export function daycareEntry(
+  date: DateKey,
+  fromMin: number,
+  toMin: number,
+  now: number,
+  timeZone: string
+): DaycareEntry {
+  if (toMin <= fromMin) return { kind: 'error', message: 'The nap has to end after it starts.' };
+  const startAt = atMinutes(date, fromMin, timeZone);
+  const endAt = atMinutes(date, toMin, timeZone);
+  return { kind: endAt > now ? 'plan' : 'actual', startAt, endAt };
+}
+
 // --- Small helpers the screens share ------------------------------------------------------------
 
 export function minutesSinceMidnight(at: number, timeZone: string): number {

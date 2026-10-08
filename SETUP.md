@@ -218,6 +218,21 @@ time?" list showing each step.
 The numbers (the shares, the half-life, the window widths) are in `TUNING` at
 the top of the engine.
 
+## Daily use
+
+- **Put to bed** means into the crib, not asleep yet; **Fell asleep** is when he
+  is actually asleep. Tapped straight from awake (the car, the stroller), Fell
+  asleep asks what kind of sleep it is and where.
+- **The Daycare card** (on daycare days, under the status) holds today's
+  daycare nap. Times that are still to come are saved as the day's plan (say
+  daycare naps at 1:00 today); times already past are saved as the nap itself,
+  from their report at pickup. Either way tonight's bedtime moves at once, and
+  the card shows it. "He did not nap" and "No daycare today" sit on the same
+  card, each with an undo. Change today and Change tomorrow cover everything
+  else for a single date.
+- **Add a sleep from earlier** (on the Today card, and Add under History) is for
+  sleeps not logged at the time.
+
 ## Before sleep, and baths
 
 - **Before this sleep.** While he is in bed or asleep, the Today screen shows a

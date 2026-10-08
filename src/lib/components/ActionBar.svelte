@@ -14,11 +14,11 @@
 
 <nav class="actions no-print" aria-label="Log sleep">
   {#if app.phase === 'awake'}
+    <!-- Put to bed: into the crib, not asleep yet. Fell asleep: asleep now (the car, the stroller). -->
     <button class="primary" onclick={() => app.putToBed()}>Put to bed</button>
     <button onclick={() => (ui.asleep = true)}>Fell asleep</button>
-    <button onclick={() => ui.newSleep()}>Add past</button>
   {:else if app.phase === 'in_bed'}
-    <button class="primary" onclick={() => app.fellAsleep()}>Asleep</button>
+    <button class="primary" onclick={() => app.fellAsleep()}>Fell asleep</button>
     <button onclick={() => app.notSleeping()}>Not sleeping</button>
   {:else if cur && cur.kind !== 'night'}
     <button class="primary" onclick={() => app.wokeUp()}>Awake</button>
