@@ -37,13 +37,12 @@ Create `.env.local` (it is git-ignored) with:
 ```bash
 VITE_SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-VITE_VAPID_PUBLIC_KEY=          # from step 6; leave empty until then
 ```
 
-For the deployed build, the same values go in GitHub as repository variables
+For the deployed build, the same two values go in GitHub as repository variables
 (Settings -> Secrets and variables -> Actions -> Variables), not secrets: they end
 up in the JavaScript either way, which is fine, since row-level security is
-what protects the data and the VAPID public key is meant to be public.
+what protects the data.
 
 ## 4. Make the two accounts and the household
 
@@ -90,11 +89,15 @@ two accounts are the only ones.
 
 ### 4b. Add the toddler
 
-Paste [`supabase/toddler.sql`](supabase/toddler.sql) into the SQL editor and run
-it. It adds the toddler's row (marked `role = 'toddler'`), the `sleeps` and
-`days` tables, the reminder tables, their row-level security and realtime, and
-a reminder secret kept in Supabase Vault. Running it twice is harmless. The
-last query should list the household with its toddler.
+The SQL editor runs SQL, not file names: open
+[`supabase/toddler.sql`](supabase/toddler.sql) on GitHub, use **Copy raw file**
+(the two-squares button above the code), paste it into a new query in the SQL
+editor, and run it. It adds the toddler's row (marked `role = 'toddler'`), the
+`sleeps`, `days` and `baths` tables, the reminder tables, their row-level
+security and realtime, and a reminder secret kept in Supabase Vault. Running it
+again is harmless, and is how a later version of the file is applied: after an
+update, paste and run it once more. The last query should list the household
+with its toddler.
 
 Signing in on a phone adopts that household and toddler, and anything logged
 before sign-in is re-pointed at them and uploaded.
@@ -121,52 +124,65 @@ within 90 days.
 ## 6. Reminders on the phones
 
 Each phone that turns reminders on gets a notification 30 minutes before the
-bedtime routine (the lead time is in Settings), and one when it is time to wake
-him in the morning. The phones work out the times and write them to
-`planned_reminders`; the `send-reminders` Edge Function, called once a minute by
-`pg_cron`, sends whatever has fallen due as a standard web push. No extra app
-is needed on either phone.
+bedtime routine (the lead time is in Settings), one when it is time to wake him
+in the morning, and one on a day a bath is due (at the time set in Settings).
+The phones work out the times and write them to `planned_reminders`; the
+`send-reminders` Edge Function, called once a minute by `pg_cron`, sends
+whatever has fallen due as a standard web push. No extra app is needed on
+either phone, and there are no keys to make or copy: the function creates the
+keys that sign the notifications on its first run and keeps them in
+`push_keys`, and the phones fetch the public half from there.
 
-1. **Make the VAPID keys** (once, on any computer with Node):
+1. **Run the latest `supabase/toddler.sql`** (step 4b) if it has changed since
+   you last ran it.
 
-   ```bash
-   npx web-push generate-vapid-keys
-   ```
-
-   The public key goes in `.env.local` and in the GitHub repository variable
-   `VITE_VAPID_PUBLIC_KEY`. The private key goes only into Supabase, below.
-
-2. **Deploy the function.** In the dashboard: Edge Functions -> Deploy a new
-   function -> Via editor. Name it `send-reminders`, paste
-   [`supabase/functions/send-reminders/index.ts`](supabase/functions/send-reminders/index.ts),
-   and turn **off** "Verify JWT" (the function checks the reminder secret
-   instead). With the CLI it is
+2. **Deploy the function.** In the Supabase dashboard: Edge Functions -> Deploy
+   a new function -> Via editor. Name it exactly `send-reminders`, replace the
+   sample code with all of
+   [`supabase/functions/send-reminders/index.ts`](supabase/functions/send-reminders/index.ts)
+   (Copy raw file, as in step 4b), and deploy. Then open the function's
+   settings and turn **off** JWT verification (labelled "Verify JWT" or
+   "Enforce JWT verification"): pg_cron calls it with the reminder secret
+   instead. With the CLI it is
    `supabase functions deploy send-reminders --no-verify-jwt`.
 
-3. **Give it its secrets** (Edge Functions -> Secrets):
-   `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` set to
-   `mailto:` and an address you read. If the function's log says it has no
-   service key, add `SERVICE_KEY` with the project's secret key
-   (`sb_secret_...`).
+3. **Schedule it.** Copy [`supabase/reminders.sql`](supabase/reminders.sql)
+   into a new SQL query, replace `https://YOUR-PROJECT-REF.supabase.co` with
+   your project URL (Project Settings -> Data API -> Project URL), and run it.
+   Wait a minute or two and run its last query again: the calls should show
+   status 200. The first call also creates the keys.
 
-4. **Schedule it.** Put the project URL into
-   [`supabase/reminders.sql`](supabase/reminders.sql) where it says, and run it
-   in the SQL editor. Its last query shows the most recent calls; after a minute
-   or two they should return status 200.
+4. **On each phone**, open the app from the home screen (see "On the phones"
+   below), sign in, then Settings -> Turn on reminders -> allow notifications ->
+   Send a test. The test reaches every phone with reminders on within a minute.
 
-5. **On each phone**, push the new build (the GitHub Pages deploy picks up the
-   new variable), then:
-   - iPhone: open the site in Safari, Share -> Add to Home Screen, and open it
-     from the home screen. Web push on an iPhone works only from there
-     (iOS 16.4 or later).
-   - Android: open it in Chrome; installing it is optional.
-
-   Then Settings -> Turn on reminders -> allow notifications -> Send a test. The
-   test reaches every phone with reminders on within a minute.
+If the function's log says it has no service key, add an Edge Function secret
+named `SERVICE_KEY` holding the project's secret key (`sb_secret_...`). If you
+prefer your own VAPID keys, set the secrets `VAPID_PUBLIC_KEY` and
+`VAPID_PRIVATE_KEY` and the GitHub variable `VITE_VAPID_PUBLIC_KEY` together;
+they then replace the stored ones. Never delete the `push_keys` row once phones
+have subscribed: their subscriptions are tied to it.
 
 A reminder more than 20 minutes overdue is dropped rather than sent late, so a
 phone that was offline does not get a stale bedtime alert. Sent reminders are
 recorded in `reminder_runs`.
+
+## On the phones
+
+The app lives at **https://delegelata.github.io/baby-app/** and installs from
+the browser; there is no app store step.
+
+- **iPhone:** open that address in **Safari** (not another browser), tap the
+  Share button, then **Add to Home Screen**, then **Add**. Open it from the new
+  home-screen icon from then on: notifications on an iPhone work only from the
+  home-screen app (iOS 16.4 or later).
+- **Android:** open the address in **Chrome**, tap the three-dot menu, then
+  **Add to Home screen** (or **Install app**), then **Install**.
+
+Then sign in with that parent's email and password from step 4. Each phone keeps
+working with no signal and catches up when it reconnects. A new version arrives
+on its own the next time the app is opened; if one ever seems stuck, close the
+app fully and open it again.
 
 ## How the predictions work
 
@@ -201,3 +217,23 @@ time?" list showing each step.
 
 The numbers (the shares, the half-life, the window widths) are in `TUNING` at
 the top of the engine.
+
+## Before sleep, and baths
+
+- **Before this sleep.** While he is in bed or asleep, the Today screen shows a
+  drop-down of activities (park or outdoors, active play, quiet play, TV or
+  screen, snack or milk, bath, books, songs or music, car ride); any sleep can
+  also be given them when it is edited. History -> Before sleep then compares,
+  for each activity, the nights with it against the nights without it: how
+  quickly he fell asleep (in bed to asleep), night wakings, and time asleep.
+  Only nights where at least one activity was recorded count, unusual days are
+  left out, the last 60 days are used, and a comparison appears once there are
+  at least 3 nights each way. The engine is `activityEffects` in
+  `src/lib/engine.ts`.
+- **Baths.** The Bath card on the Today screen records baths and says when the
+  next is due; a "Bath" chosen before a sleep counts too (once, if the same bath
+  was also logged). The interval defaults to every 3 days, in line with general
+  paediatric and dermatology guidance of two or three baths a week for
+  toddlers, plus one after a messy day. Settings holds the interval and the
+  reminder time (empty for no reminder).
+

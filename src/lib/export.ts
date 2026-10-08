@@ -1,7 +1,7 @@
 // The CSV export: every sleep, one row each, times in the household zone.
 import { dayOf, netSleepMinutes, wakingMinutes } from './engine';
 import { toLocalInput } from './format';
-import type { Sleep } from './model';
+import { ACTIVITY_LABEL, type Sleep } from './model';
 
 const COLUMNS = [
   'date',
@@ -14,6 +14,7 @@ const COLUMNS = [
   'minutes_awake_in_night',
   'place',
   'mood',
+  'before_sleep',
   'note',
   'deleted'
 ];
@@ -39,6 +40,7 @@ export function sleepsCsv(sleeps: Sleep[], timeZone: string, now = Date.now()): 
       Math.round(wakingMinutes(s, s.woke_at ? Date.parse(s.woke_at) : now)),
       s.place,
       s.mood,
+      (s.activities ?? []).map((a) => ACTIVITY_LABEL[a]).join('; '),
       s.note,
       s.deleted_at ? 'yes' : ''
     ]);

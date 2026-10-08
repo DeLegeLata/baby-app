@@ -6,6 +6,7 @@
   import { clockAt, dur, since, tidy } from '../format';
   import { KIND_LABEL, MOODS, MOOD_LABEL, SLEEP_KINDS } from '../model';
   import { netSleepMinutes, wakingMinutes } from '../engine';
+  import ActivityPicker from './ActivityPicker.svelte';
 
   const tz = $derived(app.settings.time_zone);
   const at = (ms: number) => clockAt(ms, tz);
@@ -75,6 +76,12 @@
         </button>
       {/each}
     </div>
+    <label for="before-sleep">Before this sleep</label>
+    <ActivityPicker
+      id="before-sleep"
+      selected={cur.activities ?? []}
+      onchange={(next) => app.setActivities(cur.id, next)}
+    />
   {/if}
 
   {#if justWoke}

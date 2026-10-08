@@ -15,7 +15,17 @@
 //     usual night before tomorrow's must-be-up, and clear of no-sleep windows.
 //     Every adjustment is written down, so the screen can say why.
 import { clock12, clockAt, dur, tidy, weekdayName } from './format';
-import type { AppSettings, DayRow, OffTag, Sleep, SleepKind } from './model';
+import {
+  ACTIVITIES,
+  ACTIVITY_LABEL,
+  type Activity,
+  type AppSettings,
+  type Bath,
+  type DayRow,
+  type OffTag,
+  type Sleep,
+  type SleepKind
+} from './model';
 import {
   DAY_MIN,
   HOUR,
@@ -68,7 +78,9 @@ export type SleepLike = Pick<
   Sleep,
   'id' | 'kind' | 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'deleted_at'
 > &
-  Partial<Pick<Sleep, 'place' | 'mood' | 'note'>>;
+  Partial<Pick<Sleep, 'place' | 'mood' | 'note' | 'activities'>>;
+
+export type BathLike = Pick<Bath, 'id' | 'at' | 'deleted_at'> & Partial<Pick<Bath, 'note'>>;
 
 export type DayLike = Pick<DayRow, 'date' | 'override' | 'off_tag' | 'no_nap' | 'deleted_at'> &
   Partial<Pick<DayRow, 'note'>>;
@@ -76,6 +88,7 @@ export type DayLike = Pick<DayRow, 'date' | 'override' | 'off_tag' | 'no_nap' | 
 export type EngineInput = {
   sleeps: SleepLike[];
   days: DayLike[];
+  baths?: BathLike[];
   settings: AppSettings;
   birth_at: string | null;
   now: number;
@@ -867,7 +880,7 @@ export function guessKind(
 
 // --- Reminders ------------------------------------------------------------------------------
 
-export type ReminderKind = 'bedtime' | 'wake';
+export type ReminderKind = 'bedtime' | 'wake' | 'bath';
 
 export type PlannedReminder = {
   kind: ReminderKind;
@@ -913,6 +926,17 @@ export function plannedReminders(input: EngineInput, name: string): PlannedRemin
     body: tidy(`Start ${name}'s routine at ${clockAt(plan.routineAt, tz)}. Asleep by ${clockAt(plan.asleepBy, tz)}.`)
   });
   out.push({ kind: 'wake', date: today, sendAt: null, title: '', body: '' });
+
+  // On a day a bath is due, at the time set in Settings; cancelled once one is logged.
+  const bath = bathStatus(input, today);
+  const remindAt = input.settings.bath_remind_at;
+  out.push({
+    kind: 'bath',
+    date: today,
+    sendAt: remindAt && bath.due ? atMinutes(today, parseClock(remindAt), tz) : null,
+    title: `Bath day for ${name}`,
+    body: bath.line
+  });
   return out;
 }
 
@@ -974,6 +998,8 @@ export type NightStat = {
   daySleep: number;
   total: number | null;
   note: string | null;
+  /** what he did before that night */
+  activities: Activity[];
 };
 
 /** One line per date: his day and the night that followed it. */
@@ -996,7 +1022,8 @@ export function dayStats(input: EngineInput, lastDate: DateKey, count: number): 
       nap: f.nap,
       daySleep: f.daySleep,
       total: n?.net != null ? n.net + f.daySleep : null,
-      note: h.days.get(date)?.note ?? null
+      note: h.days.get(date)?.note ?? null,
+      activities: n?.sleep.activities ?? []
     });
   }
   return out;
@@ -1087,6 +1114,196 @@ export function weeklySummary(input: EngineInput): { lines: string[]; current: A
     lines.push(`${current.offDays} unusual ${current.offDays === 1 ? 'day is' : 'days are'} left out of these averages.`);
   }
   return { lines: lines.map(tidy), current, previous };
+}
+
+// --- What he did before sleep ---------------------------------------------------------------------
+
+export type Comparison = { with: number | null; without: number | null };
+
+export type ActivityEffect = {
+  activity: Activity;
+  kind: 'night' | 'nap';
+  withCount: number;
+  withoutCount: number;
+  /** minutes from going into bed to falling asleep */
+  settle: Comparison;
+  /** night wakings per night (nights only) */
+  wakings: Comparison;
+  /** minutes asleep, wakings taken out */
+  length: Comparison;
+  /** at least MIN_EACH sleeps with the activity and MIN_EACH without */
+  enough: boolean;
+  line: string;
+};
+
+export const ACTIVITY_MIN_EACH = 3;
+
+function mean(xs: number[]): number | null {
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
+
+/**
+ * How each activity lines up with his sleep. For each kind of sleep, only the
+ * sleeps where at least one activity was recorded are compared, so a night
+ * nobody logged anything for does not count as a night "without" books. The
+ * last `days` days are used, and unusual days are left out.
+ */
+export function activityEffects(
+  input: EngineInput,
+  days = 60
+): { nights: number; naps: number; effects: ActivityEffect[] } {
+  const h = new History(input);
+  const today = h.today();
+  const from = addDays(today, -days);
+  const effects: ActivityEffect[] = [];
+  const counts = { night: 0, nap: 0 };
+
+  for (const kind of ['night', 'nap'] as const) {
+    const pool = h.sleeps.filter((s) => {
+      if (s.kind !== kind || !s.asleep_at || !s.woke_at || !(s.activities ?? []).length) return false;
+      const date = dayOf(s, h.tz);
+      return date >= from && date < today && !h.days.get(date)?.off_tag;
+    });
+    counts[kind] = pool.length;
+
+    const settle = (s: SleepLike) => {
+      if (!s.in_bed_at || !s.asleep_at) return null;
+      const min = (toMs(s.asleep_at) - toMs(s.in_bed_at)) / MINUTE;
+      return min >= 0 && min <= 120 ? min : null;
+    };
+    const measure = (group: SleepLike[]) => ({
+      settle: mean(group.map(settle).filter((x): x is number => x !== null)),
+      wakings: kind === 'night' ? mean(group.map((s) => (s.wakings ?? []).length)) : null,
+      length: mean(group.map((s) => netSleepMinutes(s, toMs(s.woke_at!))))
+    });
+
+    for (const activity of ACTIVITIES) {
+      const withIt = pool.filter((s) => s.activities!.includes(activity));
+      if (!withIt.length) continue;
+      const without = pool.filter((s) => !s.activities!.includes(activity));
+      const a = measure(withIt);
+      const b = measure(without);
+      const enough = withIt.length >= ACTIVITY_MIN_EACH && without.length >= ACTIVITY_MIN_EACH;
+      const effect: ActivityEffect = {
+        activity,
+        kind,
+        withCount: withIt.length,
+        withoutCount: without.length,
+        settle: { with: a.settle, without: b.settle },
+        wakings: { with: a.wakings, without: b.wakings },
+        length: { with: a.length, without: b.length },
+        enough,
+        line: ''
+      };
+      effect.line = describeEffect(effect);
+      effects.push(effect);
+    }
+  }
+
+  effects.sort((x, y) => Number(y.enough) - Number(x.enough) || y.withCount - x.withCount);
+  return { nights: counts.night, naps: counts.nap, effects };
+}
+
+function describeEffect(e: ActivityEffect): string {
+  const noun = e.kind === 'night' ? 'nights' : 'naps';
+  const label = ACTIVITY_LABEL[e.activity];
+  if (!e.enough) {
+    return `${label}: ${e.withCount} ${e.withCount === 1 ? noun.slice(0, -1) : noun} with it and ${e.withoutCount} without so far. The comparison appears once there are at least ${ACTIVITY_MIN_EACH} of each.`;
+  }
+  const parts: string[] = [];
+  const s = e.settle;
+  if (s.with !== null && s.without !== null) {
+    const d = s.with - s.without;
+    parts.push(
+      Math.abs(d) < 3
+        ? 'about as quick to fall asleep'
+        : d < 0
+          ? `fell asleep ${dur(-d)} faster`
+          : `took ${dur(d)} longer to fall asleep`
+    );
+  }
+  const w = e.wakings;
+  if (w.with !== null && w.without !== null) {
+    const d = w.with - w.without;
+    parts.push(
+      Math.abs(d) < 0.15
+        ? 'about as many night wakings'
+        : `${Math.abs(d).toFixed(1)} ${d < 0 ? 'fewer' : 'more'} night wakings a night`
+    );
+  }
+  const l = e.length;
+  if (l.with !== null && l.without !== null) {
+    const d = l.with - l.without;
+    parts.push(
+      Math.abs(d) < 5 ? 'about the same amount of sleep' : d > 0 ? `slept ${dur(d)} longer` : `slept ${dur(-d)} less`
+    );
+  }
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  return `${label} (${e.withCount} ${noun} with it, ${e.withoutCount} without): ${list}.`;
+}
+
+// --- Baths ------------------------------------------------------------------------------------------
+
+export type BathEvent = { id: string; at: number; source: 'log' | 'routine' };
+
+export type BathStatus = {
+  /** newest first */
+  events: BathEvent[];
+  last: BathEvent | null;
+  daysSince: number | null;
+  dueOn: DateKey | null;
+  due: boolean;
+  line: string;
+};
+
+/** A bath logged within this long of a bedtime "bath" activity is the same bath. */
+const SAME_BATH_MS = 3 * HOUR;
+
+/** Baths from the tracker, and baths recorded as part of a bedtime routine. */
+export function bathEvents(input: EngineInput): BathEvent[] {
+  const logged: BathEvent[] = (input.baths ?? [])
+    .filter((b) => !b.deleted_at)
+    .map((b) => ({ id: b.id, at: toMs(b.at), source: 'log' as const }));
+  const routine: BathEvent[] = [];
+  for (const s of input.sleeps) {
+    if (s.deleted_at || !(s.activities ?? []).includes('bath')) continue;
+    const at = startMs(s);
+    if (at === null || logged.some((b) => Math.abs(b.at - at) <= SAME_BATH_MS)) continue;
+    routine.push({ id: s.id, at, source: 'routine' });
+  }
+  return [...logged, ...routine].sort((a, b) => b.at - a.at);
+}
+
+/** When the last bath was, and whether one is due, by the interval in Settings. */
+export function bathStatus(input: EngineInput, today?: DateKey): BathStatus {
+  const tz = input.settings.time_zone;
+  const day = today ?? new History(input).today();
+  const every = input.settings.bath_every_days;
+  // The engine's clock moves once a minute, but "Bath done" is stamped to the
+  // second: allow a few minutes ahead, so a bath counts the moment it is logged.
+  const events = bathEvents(input).filter((e) => e.at <= input.now + 10 * MINUTE);
+  const last = events[0] ?? null;
+  if (!last) {
+    return { events, last, daysSince: null, dueOn: null, due: true, line: 'No bath logged yet.' };
+  }
+  const lastDay = dateKey(last.at, tz);
+  const daysSince = daysBetween(lastDay, day);
+  const dueOn = addDays(lastDay, every);
+  const overdue = daysBetween(dueOn, day);
+  const due = overdue >= 0;
+
+  const when =
+    daysSince <= 0
+      ? 'Bath today.'
+      : daysSince === 1
+        ? 'Last bath yesterday.'
+        : `Last bath ${weekdayName(lastDay)}, ${daysSince} days ago.`;
+  const next = !due
+    ? ` Next one due ${daysBetween(day, dueOn) === 1 ? 'tomorrow' : weekdayName(dueOn)}.`
+    : overdue === 0
+      ? ' Due today.'
+      : ` Due since ${overdue === 1 ? 'yesterday' : weekdayName(dueOn)}.`;
+  return { events, last, daysSince, dueOn, due, line: when + next };
 }
 
 // --- Small helpers the screens share ------------------------------------------------------------

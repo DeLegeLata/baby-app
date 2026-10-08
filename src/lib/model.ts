@@ -1,5 +1,5 @@
-// Sleep records, per-date changes and settings. The columns mirror the
-// Supabase tables in supabase/schema.sql, so a row can be uploaded as-is.
+// Sleep records, per-date changes, baths and settings. The columns mirror the
+// Supabase tables in supabase/toddler.sql, so a row can be uploaded as-is.
 import { z } from 'zod';
 import { CLOCK_PATTERN, parseClock, type DateKey } from './time';
 
@@ -16,6 +16,32 @@ export type Mood = (typeof MOODS)[number];
 
 export const OFF_TAGS = ['sick', 'teething', 'travel', 'other'] as const;
 export type OffTag = (typeof OFF_TAGS)[number];
+
+/** What he did before a sleep, in the order a day usually runs. */
+export const ACTIVITIES = [
+  'outdoors',
+  'active_play',
+  'quiet_play',
+  'screen',
+  'snack',
+  'bath',
+  'books',
+  'music',
+  'car'
+] as const;
+export type Activity = (typeof ACTIVITIES)[number];
+
+export const ACTIVITY_LABEL: Record<Activity, string> = {
+  outdoors: 'Park or outdoors',
+  active_play: 'Active play',
+  quiet_play: 'Quiet play',
+  screen: 'TV or screen',
+  snack: 'Snack or milk',
+  bath: 'Bath',
+  books: 'Books',
+  music: 'Songs or music',
+  car: 'Car ride'
+};
 
 export const KIND_LABEL: Record<SleepKind, string> = { night: 'Night', nap: 'Nap', catnap: 'Catnap' };
 export const PLACE_LABEL: Record<Place, string> = {
@@ -62,6 +88,15 @@ export type Sleep = SyncFields & {
   place: Place | null;
   mood: Mood | null;
   note: string | null;
+  /** what he did before this sleep (absent on rows logged before this field existed) */
+  activities?: Activity[];
+};
+
+/** A bath. Baths given as part of a bedtime routine also count (see the "bath" activity). */
+export type Bath = SyncFields & {
+  id: string;
+  at: string;
+  note: string | null;
 };
 
 export type NoSleepWindow = { start: string; end: string; label: string };
@@ -104,6 +139,20 @@ export const SLEEP_COLUMNS = [
   'wakings',
   'place',
   'mood',
+  'note',
+  'activities',
+  'logged_by',
+  'rev',
+  'updated_at',
+  'deleted_at',
+  'schema_version'
+] as const;
+
+export const BATH_COLUMNS = [
+  'id',
+  'household_id',
+  'child_id',
+  'at',
   'note',
   'logged_by',
   'rev',
@@ -185,6 +234,12 @@ export const settingsSchema = z.object({
   reminder_lead_min: z.number().int().min(0).max(120),
   time_zone: z.string().refine(isTimeZone, 'Use a time zone name such as America/Toronto'),
   night_look: z.enum(['auto', 'off']),
+  // Added after the first release, so settings saved before then still load:
+  // a missing value takes its default instead of failing the whole object.
+  /** a bath is due this many days after the last one */
+  bath_every_days: z.number().int().min(1).max(14).default(3),
+  /** when the bath reminder goes out on a day a bath is due; null for none */
+  bath_remind_at: clock.nullable().default('17:00'),
   /** when the settings last changed on either phone; the newer copy wins */
   updated_at: z.string()
 });
@@ -208,6 +263,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reminder_lead_min: 30,
   time_zone: 'America/Toronto',
   night_look: 'auto',
+  bath_every_days: 3,
+  bath_remind_at: '17:00',
   updated_at: '1970-01-01T00:00:00.000Z'
 };
 

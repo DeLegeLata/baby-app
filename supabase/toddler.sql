@@ -1,6 +1,8 @@
--- The toddler sleep app, on top of schema.sql. Run it once in the Supabase SQL
--- editor of the existing project; running it again is harmless. The newborn
--- app's tables and rows (entries, alerts) are left exactly as they are.
+-- The toddler sleep app, on top of schema.sql. Paste the whole file into the
+-- Supabase SQL editor of the existing project and run it. Running it again,
+-- including after an update to this file, is harmless: it only adds what is
+-- missing. The newborn app's tables and rows (entries, alerts) are left exactly
+-- as they are.
 
 -- --- The child -------------------------------------------------------------------
 -- The toddler gets his own row in babies, marked by role. Name and birth date
@@ -30,6 +32,8 @@ create table if not exists sleeps (
   place text check (place in ('bed', 'daycare', 'car', 'stroller', 'parents_bed', 'other')),
   mood text check (mood in ('happy', 'fine', 'grumpy')),
   note text,
+  -- what he did before this sleep: ["books", "bath", ...]
+  activities jsonb not null default '[]'::jsonb,
   logged_by uuid not null,
   rev integer not null default 1,
   updated_at timestamptz not null default now(),
@@ -37,6 +41,9 @@ create table if not exists sleeps (
   schema_version integer not null default 1,
   check (asleep_at is not null or in_bed_at is not null)
 );
+
+-- Added after the first release, for projects that already have the table.
+alter table sleeps add column if not exists activities jsonb not null default '[]'::jsonb;
 
 create index if not exists sleeps_household_updated on sleeps (household_id, updated_at);
 create index if not exists sleeps_household_asleep on sleeps (household_id, asleep_at desc);
@@ -64,6 +71,25 @@ create table if not exists days (
 
 create index if not exists days_household_updated on days (household_id, updated_at);
 
+-- --- Baths --------------------------------------------------------------------------
+-- Baths logged in the tracker. A bath given in the bedtime routine can also be
+-- recorded as a "bath" activity on that sleep; the app counts both, once.
+
+create table if not exists baths (
+  id uuid primary key,
+  household_id uuid not null references households (id) on delete cascade,
+  child_id uuid not null references babies (id) on delete cascade,
+  at timestamptz not null,
+  note text,
+  logged_by uuid not null,
+  rev integer not null default 1,
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  schema_version integer not null default 1
+);
+
+create index if not exists baths_household_updated on baths (household_id, updated_at);
+
 -- The server stamps updated_at, so the pull never misses a row because one
 -- phone's clock runs behind the other's.
 create or replace function stamp_updated_at () returns trigger language plpgsql as $$
@@ -79,6 +105,10 @@ for each row execute function stamp_updated_at ();
 
 drop trigger if exists days_stamp on days;
 create trigger days_stamp before insert or update on days
+for each row execute function stamp_updated_at ();
+
+drop trigger if exists baths_stamp on baths;
+create trigger baths_stamp before insert or update on baths
 for each row execute function stamp_updated_at ();
 
 -- --- Reminders ------------------------------------------------------------------------
@@ -97,7 +127,7 @@ create table if not exists push_subscriptions (
 
 create table if not exists planned_reminders (
   household_id uuid not null references households (id) on delete cascade,
-  kind text not null check (kind in ('bedtime', 'wake', 'test')),
+  kind text not null,
   for_date date not null,
   -- null means cancelled
   send_at timestamptz,
@@ -107,6 +137,12 @@ create table if not exists planned_reminders (
   updated_at timestamptz not null default now(),
   primary key (household_id, kind, for_date)
 );
+
+-- Replaced rather than declared inline, so a project made before the bath
+-- reminder existed gains it too.
+alter table planned_reminders drop constraint if exists planned_reminders_kind_check;
+alter table planned_reminders add constraint planned_reminders_kind_check
+check (kind in ('bedtime', 'wake', 'bath', 'test'));
 
 create index if not exists planned_reminders_due on planned_reminders (send_at)
 where sent_at is null;
@@ -126,12 +162,34 @@ drop trigger if exists planned_reminders_replan on planned_reminders;
 create trigger planned_reminders_replan before update on planned_reminders
 for each row execute function replan_reminder ();
 
+-- The VAPID keys that sign the notifications. send-reminders makes them on its
+-- first run, so nobody has to generate or copy keys. The table has no policies,
+-- so only the service role (the function) can read it; the phones get the
+-- public half alone, through push_public_key().
+create table if not exists push_keys (
+  id integer primary key default 1 check (id = 1),
+  public_key text not null,
+  private_key text not null,
+  created_at timestamptz not null default now()
+);
+
+create or replace function push_public_key () returns text language sql stable security definer
+set
+  search_path = public as $$
+  select public_key from push_keys where id = 1;
+$$;
+
+revoke execute on function push_public_key () from public, anon;
+grant execute on function push_public_key () to authenticated;
+
 -- --- Row-level security ----------------------------------------------------------------
 
 alter table sleeps enable row level security;
 alter table days enable row level security;
+alter table baths enable row level security;
 alter table push_subscriptions enable row level security;
 alter table planned_reminders enable row level security;
+alter table push_keys enable row level security;
 
 drop policy if exists sleeps_rw on sleeps;
 create policy sleeps_rw on sleeps for all using (is_member (household_id))
@@ -140,6 +198,11 @@ with
 
 drop policy if exists days_rw on days;
 create policy days_rw on days for all using (is_member (household_id))
+with
+  check (is_member (household_id));
+
+drop policy if exists baths_rw on baths;
+create policy baths_rw on baths for all using (is_member (household_id))
 with
   check (is_member (household_id));
 
@@ -164,6 +227,12 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table days;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table baths;
 exception when duplicate_object then null;
 end $$;
 

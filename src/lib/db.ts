@@ -6,7 +6,9 @@ import {
   SCHEMA_VERSION,
   dayId,
   settingsSchema,
+  type Activity,
   type AppSettings,
+  type Bath,
   type Child,
   type DayRow,
   type Sleep,
@@ -22,6 +24,7 @@ class SleepDb extends Dexie {
   meta!: Table<Meta, string>;
   sleeps!: Table<Sleep, string>;
   days!: Table<DayRow, string>;
+  baths!: Table<Bath, string>;
 
   constructor() {
     super('baby-app');
@@ -32,6 +35,9 @@ class SleepDb extends Dexie {
     this.version(2).stores({
       sleeps: 'id, kind, asleep_at, synced',
       days: 'id, date, synced'
+    });
+    this.version(3).stores({
+      baths: 'id, at, synced'
     });
   }
 }
@@ -102,12 +108,18 @@ export async function liveDays(): Promise<DayRow[]> {
   return rows.filter((d) => !d.deleted_at);
 }
 
+export async function liveBaths(): Promise<Bath[]> {
+  const rows = await db.baths.toArray();
+  return rows.filter((b) => !b.deleted_at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+}
+
 export async function unsentCount(): Promise<number> {
-  const [sleeps, days] = await Promise.all([
+  const counts = await Promise.all([
     db.sleeps.where('synced').equals(0).count(),
-    db.days.where('synced').equals(0).count()
+    db.days.where('synced').equals(0).count(),
+    db.baths.where('synced').equals(0).count()
   ]);
-  return sleeps + days;
+  return counts.reduce((a, b) => a + b, 0);
 }
 
 function stamp(who: Identity) {
@@ -126,7 +138,9 @@ function stamp(who: Identity) {
 export async function createSleep(
   who: Identity,
   kind: SleepKind,
-  fields: Partial<Pick<Sleep, 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'place' | 'mood' | 'note'>>
+  fields: Partial<
+    Pick<Sleep, 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'place' | 'mood' | 'note' | 'activities'>
+  >
 ): Promise<Sleep> {
   const sleep: Sleep = {
     id: crypto.randomUUID(),
@@ -138,6 +152,7 @@ export async function createSleep(
     place: null,
     mood: null,
     note: null,
+    activities: [] as Activity[],
     ...fields,
     ...stamp(who)
   };
@@ -194,4 +209,31 @@ export async function saveDay(
       };
   await db.days.put(next);
   return next;
+}
+
+// --- Baths ----------------------------------------------------------------------------
+
+export async function createBath(who: Identity, at: string, note: string | null = null): Promise<Bath> {
+  const bath: Bath = { id: crypto.randomUUID(), at, note, ...stamp(who) };
+  await db.baths.put(bath);
+  return bath;
+}
+
+export async function updateBath(id: string, changes: Partial<Bath>): Promise<Bath | undefined> {
+  const current = await db.baths.get(id);
+  if (!current) return undefined;
+  const next: Bath = {
+    ...current,
+    ...changes,
+    rev: current.rev + 1,
+    updated_at: new Date().toISOString(),
+    synced: 0
+  };
+  await db.baths.put(next);
+  return next;
+}
+
+/** Soft delete, so the delete reaches the other phone. */
+export async function deleteBath(id: string): Promise<void> {
+  await updateBath(id, { deleted_at: new Date().toISOString() });
 }

@@ -5,7 +5,7 @@
   import { ui } from '../ui.svelte';
   import { clock12, clockAt, dayLabel, dur, keyLabel } from '../format';
   import { KIND_LABEL, OFF_LABEL, type Sleep } from '../model';
-  import { chartRows, dayStats, netSleepMinutes, weeklySummary } from '../engine';
+  import { activityEffects, chartRows, dayStats, netSleepMinutes, weeklySummary } from '../engine';
   import { saveFile, sleepsCsv } from '../export';
   import SleepChart from './SleepChart.svelte';
 
@@ -14,6 +14,9 @@
 
   const tz = $derived(app.settings.time_zone);
   const summary = $derived(weeklySummary(app.input));
+  const before = $derived(activityEffects(app.input));
+  const nightEffects = $derived(before.effects.filter((e) => e.kind === 'night'));
+  const napEffects = $derived(before.effects.filter((e) => e.kind === 'nap'));
   const rows = $derived(chartRows(app.input, app.today, DAYS));
   const stats = $derived(dayStats(app.input, app.today, DAYS).reverse());
   const list = $derived(showAll ? app.sleeps : app.sleeps.slice(0, 30));
@@ -65,6 +68,34 @@
       </table>
     </div>
   </details>
+</section>
+
+<section class="card">
+  <h3>Before sleep</h3>
+  {#if before.effects.length === 0}
+    <p class="muted" style="margin-top: 6px">
+      Choose what he did before a sleep from the list under "Before this sleep" on the Today screen, or when editing a
+      sleep. After a few nights, this shows how each activity lines up with how quickly he falls asleep, how often he
+      wakes and how long he sleeps.
+    </p>
+  {:else}
+    {#if nightEffects.length}
+      <ul class="reasons">
+        {#each nightEffects as effect (effect.activity)}<li>{effect.line}</li>{/each}
+      </ul>
+    {/if}
+    {#if napEffects.length}
+      <p class="muted" style="margin: 10px 0 0"><b>Naps</b></p>
+      <ul class="reasons">
+        {#each napEffects as effect (effect.activity)}<li>{effect.line}</li>{/each}
+      </ul>
+    {/if}
+    <p class="muted" style="margin: 10px 0 0">
+      These compare his own sleeps over the last 60 days, counting only those where at least one activity was
+      recorded, and leaving out unusual days. They show patterns, not proof: a busy day can bring both a trip to the
+      park and a good night, and a difference resting on a handful of nights can be chance.
+    </p>
+  {/if}
 </section>
 
 <section class="card">

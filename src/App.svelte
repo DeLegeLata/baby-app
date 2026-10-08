@@ -4,6 +4,8 @@
   import { ui } from './lib/ui.svelte';
   import StatusCard from './lib/components/StatusCard.svelte';
   import TodayCard from './lib/components/TodayCard.svelte';
+  import BathCard from './lib/components/BathCard.svelte';
+  import BathSheet from './lib/components/BathSheet.svelte';
   import HistoryView from './lib/components/HistoryView.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
   import AsleepSheet from './lib/components/AsleepSheet.svelte';
@@ -60,6 +62,7 @@
   {#if ui.tab === 'today'}
     <StatusCard />
     <TodayCard />
+    <BathCard />
   {:else}
     <HistoryView />
   {/if}
@@ -83,5 +86,6 @@
 <SleepSheet />
 <DaySheet />
 <SettingsSheet />
+<BathSheet />
 <ConflictDialog />
 <ReportView />

@@ -1,11 +1,14 @@
 // One reactive store over the local database. Screens read it; actions write
 // through db.ts and refresh it. The engine runs on the minute, not the second.
 import {
+  createBath,
   createSleep,
   db,
+  deleteBath,
   deleteSleep,
   getMeta,
   identity,
+  liveBaths,
   liveDays,
   liveSleeps,
   loadChild,
@@ -15,11 +18,13 @@ import {
   saveSettings,
   setMeta,
   unsentCount,
+  updateBath,
   updateSleep,
   type Identity
 } from './db';
 import {
   History,
+  bathStatus,
   dayOf,
   guessKind,
   learn,
@@ -27,6 +32,7 @@ import {
   planBedtime,
   planWake,
   plannedReminders,
+  type BathStatus,
   type BedtimePlan,
   type EngineInput,
   type Phase,
@@ -35,7 +41,9 @@ import {
 import {
   DEFAULT_SETTINGS,
   dayId,
+  type Activity,
   type AppSettings,
+  type Bath,
   type Child,
   type DayRow,
   type Mood,
@@ -46,6 +54,7 @@ import {
 import { pushStatus, writeReminders, type PushStatus } from './reminders';
 import { configured, supabase } from './supabase';
 import {
+  describeError,
   fetchChild,
   partnerLastSeen,
   pullChanges,
@@ -66,6 +75,7 @@ const plain = <T>(value: T): T => $state.snapshot(value) as T;
 class AppState {
   sleeps = $state<Sleep[]>([]);
   days = $state<DayRow[]>([]);
+  baths = $state<Bath[]>([]);
   settings = $state<AppSettings>(DEFAULT_SETTINGS);
   child = $state<Child>({ name: 'Toddler', birth_at: null });
   who = $state<Identity | null>(null);
@@ -91,6 +101,7 @@ class AppState {
   input = $derived<EngineInput>({
     sleeps: this.sleeps,
     days: this.days,
+    baths: this.baths,
     settings: this.settings,
     birth_at: this.child.birth_at,
     now: this.minute
@@ -113,6 +124,9 @@ class AppState {
   );
   /** how long he usually takes to fall asleep, as learned */
   settle = $derived(Math.round(learn(this.history, this.today).settle));
+
+  /** the last bath, and whether one is due by the interval in Settings */
+  bath = $derived<BathStatus>(bathStatus(this.input, this.today));
 
   wake = $derived<WakePlan | null>(
     this.current?.kind === 'night' ? planWake(this.input, this.current) : null
@@ -203,13 +217,11 @@ class AppState {
     try {
       remote = await fetchChild(householdId);
     } catch (error) {
-      this.syncError = `The sleep tables are not set up yet. Run supabase/toddler.sql (SETUP.md, step 4). (${
-        error instanceof Error ? error.message : String(error)
-      })`;
+      this.syncError = describeError(error);
       return;
     }
     if (!remote) {
-      this.syncError = 'No toddler in this household yet. Run supabase/toddler.sql (SETUP.md, step 4).';
+      this.syncError = 'No toddler in this household yet. Run supabase/toddler.sql in the Supabase SQL editor (SETUP.md, step 4b).';
       return;
     }
 
@@ -238,6 +250,8 @@ class AppState {
       const days = (await db.days.toArray()).filter((d) => !stays(d));
       await db.days.bulkDelete(days.map((d) => d.id));
       await db.days.bulkPut(days.map((d) => ({ ...repoint(d), id: dayId(next.child_id, d.date) })));
+      const baths = (await db.baths.toArray()).filter((b) => !stays(b));
+      await db.baths.bulkPut(baths.map(repoint));
     }
 
     this.who = next;
@@ -271,7 +285,7 @@ class AppState {
       this.lastSyncAt = Date.now();
       this.syncError = null;
     } catch (error) {
-      this.syncError = error instanceof Error ? error.message : String(error);
+      this.syncError = describeError(error);
     } finally {
       this.syncing = false;
       await this.refresh();
@@ -302,6 +316,7 @@ class AppState {
   async refresh() {
     this.sleeps = await liveSleeps();
     this.days = await liveDays();
+    this.baths = await liveBaths();
     this.unsent = await unsentCount();
     this.now = Date.now();
     void this.planReminders();
@@ -328,10 +343,19 @@ class AppState {
 
   // --- Live logging -----------------------------------------------------------
 
+  /** A bath logged in the last two hours was part of this bedtime, so the sleep notes it. */
+  private bathJustNow(): Activity[] {
+    const now = Date.now();
+    return this.baths.some((b) => Date.parse(b.at) <= now && now - Date.parse(b.at) <= 2 * 3_600_000) ? ['bath'] : [];
+  }
+
   /** Into bed now. The kind follows the time of day and can be changed on the card. */
   putToBed() {
     const kind = guessKind(this.input, 'bed', Date.now());
-    return this.act((who) => createSleep(who, kind, { in_bed_at: new Date().toISOString(), place: 'bed' }));
+    const activities = this.bathJustNow();
+    return this.act((who) =>
+      createSleep(who, kind, { in_bed_at: new Date().toISOString(), place: 'bed', activities })
+    );
   }
 
   /** Asleep now: either the sleep he is in bed for, or a new one (a catnap in the car). */
@@ -341,9 +365,9 @@ class AppState {
     if (cur && !cur.asleep_at) {
       return this.act(() => updateSleep(cur.id, { asleep_at: now, ...(kind ? { kind } : {}) }));
     }
-    return this.act((who) =>
-      createSleep(who, kind ?? guessKind(this.input, 'asleep', Date.now()), { asleep_at: now, place: place ?? null })
-    );
+    const chosen = kind ?? guessKind(this.input, 'asleep', Date.now());
+    const activities = chosen === 'catnap' ? [] : this.bathJustNow();
+    return this.act((who) => createSleep(who, chosen, { asleep_at: now, place: place ?? null, activities }));
   }
 
   /** He never fell asleep: drop the in-bed record. */
@@ -387,6 +411,26 @@ class AppState {
 
   setMood(id: string, mood: Mood | null) {
     return this.act(() => updateSleep(id, { mood }));
+  }
+
+  /** What he did before this sleep. */
+  setActivities(id: string, activities: Activity[]) {
+    const list = plain(activities);
+    return this.act(() => updateSleep(id, { activities: list }));
+  }
+
+  // --- Baths ----------------------------------------------------------------------
+
+  logBath(at: string = new Date().toISOString(), note: string | null = null) {
+    return this.act((who) => createBath(who, at, note));
+  }
+
+  saveBath(id: string, at: string, note: string | null) {
+    return this.act(() => updateBath(id, { at, note }));
+  }
+
+  removeBath(id: string) {
+    return this.act(() => deleteBath(id));
   }
 
   // --- Editing ------------------------------------------------------------------

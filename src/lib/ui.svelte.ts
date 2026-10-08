@@ -11,6 +11,8 @@ class Ui {
   settings = $state(false);
   asleep = $state(false);
   report = $state(false);
+  /** the bath sheet: a new earlier bath (id null) or one to edit */
+  bath = $state<{ id: string | null } | null>(null);
 
   editSleep(id: string) {
     this.sleep = { id, preset: {} };

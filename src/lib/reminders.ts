@@ -6,12 +6,13 @@
 import type { PlannedReminder } from './engine';
 import { supabase } from './supabase';
 
-const VAPID = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-
-export const pushConfigured = Boolean(VAPID);
+// The public half of the key that signs the notifications. Normally the phones
+// ask Supabase for it (push_public_key(), filled in by send-reminders on its
+// first run); a build variable can supply it instead.
+const BUILD_VAPID = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) || undefined;
 
 export type PushStatus =
-  | 'unconfigured' // this build has no VAPID key
+  | 'unconfigured' // this build has no Supabase project
   | 'unsupported' // the browser cannot do web push
   | 'needs-install' // an iPhone: web push only works from the home-screen app
   | 'blocked' // the person said no
@@ -30,7 +31,7 @@ function isIos(): boolean {
 }
 
 export async function pushStatus(): Promise<PushStatus> {
-  if (!pushConfigured || !supabase) return 'unconfigured';
+  if (!supabase) return 'unconfigured';
   if (isIos() && !isStandalone()) return 'needs-install';
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     return 'unsupported';
@@ -49,17 +50,32 @@ function keyBytes(base64: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+async function publicKey(): Promise<string> {
+  if (BUILD_VAPID) return BUILD_VAPID;
+  const { data, error } = await supabase!.rpc('push_public_key');
+  if (error) throw error;
+  if (typeof data !== 'string' || !data) {
+    throw new Error(
+      'Reminders are not switched on in Supabase yet. Finish SETUP.md, step 6, wait a minute for the first run, then try again.'
+    );
+  }
+  return data;
+}
+
 /** Must run from a tap: the iPhone only asks for permission in response to one. */
 export async function enablePush(householdId: string, userId: string): Promise<void> {
-  if (!supabase || !VAPID) throw new Error('This build has no push key yet. See SETUP.md, step 6.');
+  if (!supabase) throw new Error('This build has no Supabase project, so reminders cannot work.');
+  // The permission prompt comes first, while the tap still counts: an iPhone
+  // only shows it in direct response to one.
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
     throw new Error('Notifications are turned off for this app. Allow them in the phone settings, then try again.');
   }
+  const key = await publicKey();
   const reg = await navigator.serviceWorker.ready;
   const sub =
     (await reg.pushManager.getSubscription()) ??
-    (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(VAPID) }));
+    (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
   const json = sub.toJSON();
   const { error } = await supabase.from('push_subscriptions').upsert(
     {

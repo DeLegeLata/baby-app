@@ -5,24 +5,30 @@
 import type { Table } from 'dexie';
 import { db, getMeta, setMeta } from './db';
 import {
+  BATH_COLUMNS,
   DAY_COLUMNS,
   SLEEP_COLUMNS,
   settingsSchema,
   toRow,
   type AppSettings,
+  type Bath,
   type Child,
   type DayRow,
   type Sleep
 } from './model';
 import { supabase } from './supabase';
 
-export type TableName = 'sleeps' | 'days';
-type Row = Sleep | DayRow;
+export type TableName = 'sleeps' | 'days' | 'baths';
+type Row = Sleep | DayRow | Bath;
 
-const COLUMNS: Record<TableName, readonly string[]> = { sleeps: SLEEP_COLUMNS, days: DAY_COLUMNS };
-const TABLES: TableName[] = ['sleeps', 'days'];
+const COLUMNS: Record<TableName, readonly string[]> = {
+  sleeps: SLEEP_COLUMNS,
+  days: DAY_COLUMNS,
+  baths: BATH_COLUMNS
+};
+const TABLES: TableName[] = ['sleeps', 'days', 'baths'];
 
-const local = (table: TableName) => (table === 'sleeps' ? db.sleeps : db.days) as unknown as Table<Row, string>;
+const local = (table: TableName) => db[table] as unknown as Table<Row, string>;
 
 export type Conflict = { table: TableName; local: Row; remote: Row };
 
@@ -232,3 +238,19 @@ export async function partnerLastSeen(householdId: string, userId: string): Prom
   const times = (data ?? []).map((m) => m.last_seen_at).filter(Boolean) as string[];
   return times.sort().pop() ?? null;
 }
+
+/**
+ * What went wrong, in words. Supabase hands back plain objects as often as
+ * Error instances, and a missing table or column means the SQL step was missed.
+ */
+export function describeError(error: unknown): string {
+  const e = error as { message?: unknown; code?: unknown } | null;
+  const message = typeof e?.message === 'string' ? e.message : String(error);
+  const code = typeof e?.code === 'string' ? e.code : '';
+  const missing =
+    ['PGRST204', 'PGRST205', '42P01', '42703'].includes(code) || /schema cache|does not exist/i.test(message);
+  return missing
+    ? `Supabase needs the latest supabase/toddler.sql: copy it from GitHub and run it in the SQL editor (SETUP.md, step 4b). (${message})`
+    : message;
+}
+
