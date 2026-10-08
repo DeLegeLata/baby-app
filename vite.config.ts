@@ -11,15 +11,15 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
-        name: 'Baby',
-        short_name: 'Baby',
-        description: 'Feeds and diapers, shared between two phones',
+        name: 'Sleep',
+        short_name: 'Sleep',
+        description: "A toddler's sleep, his schedule and his best bedtime, shared between two phones",
         start_url: '.',
         scope: '.',
         display: 'standalone',
         orientation: 'portrait',
-        background_color: '#f6f5f3',
-        theme_color: '#2f6f5e',
+        background_color: '#f4f3f8',
+        theme_color: '#3d4a8a',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -30,7 +30,9 @@ export default defineConfig({
         // The shell is cached so the app opens with no signal; data lives in IndexedDB.
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         navigateFallback: 'index.html',
-        cleanupOutdatedCaches: true
+        cleanupOutdatedCaches: true,
+        // The push and notification-tap handlers live in public/push-sw.js.
+        importScripts: ['push-sw.js']
       }
     })
   ],
