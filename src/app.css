@@ -148,6 +148,11 @@ button:disabled {
   justify-content: space-between;
 }
 
+/* The "Synced" line at the foot of the page: its button keeps its width beside the text. */
+.sync-line button {
+  flex: none;
+}
+
 .muted {
   color: var(--muted);
   font-size: 14px;

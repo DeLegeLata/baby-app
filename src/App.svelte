@@ -1,5 +1,6 @@
 <script lang="ts">
   import './app.css';
+  import { tick } from 'svelte';
   import { app } from './lib/state.svelte';
   import { ui } from './lib/ui.svelte';
   import StatusCard from './lib/components/StatusCard.svelte';
@@ -49,6 +50,15 @@
     await installEvent.prompt();
     installEvent = null;
   }
+
+  let errorBanner = $state<HTMLElement | null>(null);
+
+  /** Sync now sits at the foot of the page and the reason a sync failed is near the top, so show it. */
+  async function syncNow() {
+    await app.sync();
+    await tick();
+    errorBanner?.scrollIntoView({ block: 'center' });
+  }
 </script>
 
 <main>
@@ -84,7 +94,7 @@
   {/if}
 
   {#if app.syncError}
-    <p class="banner">{app.syncError}</p>
+    <p class="banner" bind:this={errorBanner}>{app.syncError}</p>
   {/if}
 
   {#if app.syncNeedsSignIn}
@@ -101,15 +111,20 @@
   {/if}
 
   {#if app.signedIn}
-    <p class="muted">
-      Synced {app.lastSyncAt ? since(app.now - app.lastSyncAt) : 'not yet'}{app.lastSyncAt &&
-      app.now - app.lastSyncAt >= 60_000
-        ? ' ago'
-        : ''}.
-      {#if app.partnerSeenAt}
-        The other phone last synced {since(app.now - Date.parse(app.partnerSeenAt))} ago.
-      {/if}
-    </p>
+    <div class="spread sync-line">
+      <p class="muted">
+        Synced {app.lastSyncAt ? since(app.now - app.lastSyncAt) : 'not yet'}{app.lastSyncAt &&
+        app.now - app.lastSyncAt >= 60_000
+          ? ' ago'
+          : ''}.
+        {#if app.partnerSeenAt}
+          The other phone last synced {since(app.now - Date.parse(app.partnerSeenAt))} ago.
+        {/if}
+      </p>
+      <button class="ghost" disabled={app.syncing} onclick={syncNow}>
+        {app.syncing ? 'Syncing…' : 'Sync now'}
+      </button>
+    </div>
   {/if}
 </main>
 

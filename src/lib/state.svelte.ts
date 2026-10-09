@@ -166,7 +166,10 @@ class AppState {
     if (!supabase) return;
     const { data } = await supabase.auth.getSession();
     await this.onSession(Boolean(data.session));
-    supabase.auth.onAuthStateChange((_event, session) => void this.onSession(Boolean(session)));
+    // The listener opens by repeating the session that was just handled above.
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (event !== 'INITIAL_SESSION') void this.onSession(Boolean(session));
+    });
   }
 
   async refreshPush() {
@@ -177,6 +180,11 @@ class AppState {
     }
   }
 
+  /** matched to a household up on Supabase, rather than logging to this phone only */
+  private get joined() {
+    return this.who !== null && this.who.user_id !== 'local';
+  }
+
   private async onSession(signedIn: boolean) {
     this.signedIn = signedIn;
     if (!signedIn || !supabase) {
@@ -184,31 +192,50 @@ class AppState {
       this.unsubscribeRealtime = null;
       return;
     }
-    await this.adoptHousehold();
-    await this.sync();
-
-    const who = this.who;
-    if (who && who.user_id !== 'local') {
-      this.unsubscribeRealtime?.();
-      this.unsubscribeRealtime = subscribeRealtime(who.household_id, () => void this.refresh());
+    // A phone that has joined its household checks it again here. One that has
+    // not is joined by sync(), so that two joins never run at the same time.
+    if (this.joined) {
+      try {
+        await this.adoptHousehold();
+      } catch (error) {
+        this.syncError = describeError(error);
+      }
     }
+    await this.sync();
+    this.listen();
+  }
+
+  /** Live changes from the other phone, once this one has joined the household. */
+  private listen() {
+    const who = this.who;
+    if (!who || who.user_id === 'local') return;
+    this.unsubscribeRealtime?.();
+    this.unsubscribeRealtime = subscribeRealtime(who.household_id, () => void this.refresh());
   }
 
   /**
    * After sign-in the real household and child ids replace the local-only ones,
    * and anything logged before sign-in is re-pointed and queued for upload.
+   * Whatever stops it is said in the banner, never left silent.
    */
   private async adoptHousehold() {
     if (!supabase) return;
-    const { data: auth } = await supabase.auth.getUser();
+    const { data: auth, error: authError } = await supabase.auth.getUser();
     const userId = auth.user?.id;
-    if (!userId) return;
+    if (!userId) {
+      this.syncError = `Could not check this phone's sign-in. ${describeError(authError ?? 'No account came back.')}`;
+      return;
+    }
 
-    const { data: membership } = await supabase
+    const { data: membership, error: memberError } = await supabase
       .from('members')
       .select('household_id')
       .eq('user_id', userId)
       .maybeSingle();
+    if (memberError) {
+      this.syncError = describeError(memberError);
+      return;
+    }
     if (!membership) {
       this.syncError = 'This account is not in a household yet. Add the member row in Supabase.';
       return;
@@ -265,19 +292,28 @@ class AppState {
       await setMeta('child_dirty', false);
     } else {
       this.child = { name: remote.name, birth_at: remote.birth_at };
-      await saveChild(this.child);
+      await saveChild(plain(this.child));
     }
     this.syncError = null;
   }
 
-  /** Push the outbox, pull what the other phone wrote, settle the settings, then refresh. */
+  /**
+   * Push the outbox, pull what the other phone wrote, settle the settings, then
+   * refresh. A phone that has not joined its household yet tries that first, so a
+   * join that failed when the app opened is tried again on every sync.
+   */
   async sync() {
     if (!supabase || !this.signedIn || this.syncing) return;
-    const who = this.who;
-    if (!who || who.user_id === 'local') return;
 
     this.syncing = true;
     try {
+      if (!this.joined) {
+        await this.adoptHousehold();
+        this.listen();
+      }
+      const who = this.who;
+      if (!who || who.user_id === 'local') return;
+
       const conflicts = await pushOutbox();
       if (conflicts.length) this.conflicts = conflicts;
       await pullChanges(who.household_id);

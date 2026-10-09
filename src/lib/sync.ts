@@ -241,7 +241,8 @@ export async function partnerLastSeen(householdId: string, userId: string): Prom
 
 /**
  * What went wrong, in words. Supabase hands back plain objects as often as
- * Error instances, and a missing table or column means the SQL step was missed.
+ * Error instances, a missing table or column means the SQL step was missed,
+ * and a request that failed or ran out of time means no connection.
  */
 export function describeError(error: unknown): string {
   const e = error as { message?: unknown; code?: unknown } | null;
@@ -249,6 +250,8 @@ export function describeError(error: unknown): string {
   const code = typeof e?.code === 'string' ? e.code : '';
   const missing =
     ['PGRST204', 'PGRST205', '42P01', '42703'].includes(code) || /schema cache|does not exist/i.test(message);
+  const unreachable = /failed to fetch|load failed|networkerror|did not answer|aborted/i.test(message);
+  if (unreachable) return `Could not reach Supabase. Check this phone's connection and try again. (${message})`;
   return missing
     ? `Supabase needs the latest supabase/toddler.sql: copy it from GitHub and run it in the SQL editor (SETUP.md, step 4b). (${message})`
     : message;
