@@ -396,7 +396,8 @@ export function napScenario(
     };
   }
   if (sched.noNap) {
-    return { kind: 'skipped', nap: null, catnaps, note: 'Daycare reported no nap today.' };
+    const note = sched.daycare ? 'Daycare reported no nap today.' : 'He did not nap today.';
+    return { kind: 'skipped', nap: null, catnaps, note };
   }
   if (sched.napStart !== null && sched.napEnd !== null) {
     const window = `${clock12(sched.napStart)} to ${clock12(sched.napEnd)}`;
@@ -1306,24 +1307,24 @@ export function bathStatus(input: EngineInput, today?: DateKey): BathStatus {
   return { events, last, daysSince, dueOn, due, line: when + next };
 }
 
-// --- The daycare nap, as typed on the Daycare card ----------------------------------------------
+// --- Nap times, as typed on the Nap card --------------------------------------------------------
 
-export type DaycareEntry =
+export type NapEntry =
   | { kind: 'plan' | 'actual'; startAt: number; endAt: number }
   | { kind: 'error'; message: string };
 
 /**
- * Nap times typed on the Daycare card. While the nap has not finished they are
+ * Nap times typed on the Nap card. While the nap has not finished they are
  * today's plan (the window tonight's bedtime assumes); once it is over they are
- * what happened, from the daycare's report.
+ * what happened: the daycare's report, or what a parent saw at home.
  */
-export function daycareEntry(
+export function napEntry(
   date: DateKey,
   fromMin: number,
   toMin: number,
   now: number,
   timeZone: string
-): DaycareEntry {
+): NapEntry {
   if (toMin <= fromMin) return { kind: 'error', message: 'The nap has to end after it starts.' };
   const startAt = atMinutes(date, fromMin, timeZone);
   const endAt = atMinutes(date, toMin, timeZone);

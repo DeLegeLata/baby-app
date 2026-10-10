@@ -4,7 +4,7 @@ import {
   activityEffects,
   bathEvents,
   bathStatus,
-  daycareEntry,
+  napEntry,
   type BathLike,
   chartRows,
   dayOf,
@@ -128,6 +128,16 @@ describe("today's nap", () => {
     ];
     const plan = planBedtime(input([], t(THU, '17:00'), { days }));
     expect(clock(plan.asleepBy)).toBe('7:15 p.m.');
+  });
+
+  it('says whose word no nap is: daycare on a daycare day, a parent at home', () => {
+    const said = (date: string) => {
+      const days: DayLike[] = [{ date, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+      return planBedtime(input([], t(date, '13:00'), { days })).assumptions.join(' ');
+    };
+    expect(said(THU)).toMatch(/Daycare reported no nap today/);
+    expect(said(SAT)).toMatch(/He did not nap today/);
+    expect(said(SAT)).not.toMatch(/Daycare/);
   });
 
   it('pushes bedtime a little later for a catnap after the nap', () => {
@@ -522,20 +532,20 @@ describe('baths', () => {
   });
 });
 
-describe('the daycare card', () => {
+describe('the nap card', () => {
   const min = (clock: string) => parseClock(clock);
 
   it('treats times still to come as the plan, and finished ones as what happened', () => {
-    const before = daycareEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '09:00')), TZ);
+    const before = napEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '09:00')), TZ);
     expect(before.kind).toBe('plan');
-    const during = daycareEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '14:00')), TZ);
+    const during = napEntry(THU, min('13:00'), min('15:00'), toMs(t(THU, '14:00')), TZ);
     expect(during.kind).toBe('plan');
-    const after = daycareEntry(THU, min('12:45'), min('14:10'), toMs(t(THU, '17:00')), TZ);
+    const after = napEntry(THU, min('12:45'), min('14:10'), toMs(t(THU, '17:00')), TZ);
     expect(after).toMatchObject({ kind: 'actual', startAt: toMs(t(THU, '12:45')), endAt: toMs(t(THU, '14:10')) });
   });
 
   it('refuses a nap that ends before it starts', () => {
-    expect(daycareEntry(THU, min('14:00'), min('13:00'), toMs(t(THU, '17:00')), TZ)).toEqual({
+    expect(napEntry(THU, min('14:00'), min('13:00'), toMs(t(THU, '17:00')), TZ)).toEqual({
       kind: 'error',
       message: 'The nap has to end after it starts.'
     });
@@ -552,6 +562,19 @@ describe('the daycare card', () => {
     // before the usual 2:30 (15 min earlier) and day sleep was 70 min short (18 min earlier).
     const reported = planBedtime(input([sleep('nap', THU, '13:10', '14:00')], t(THU, '17:00'), { days }));
     expect(clock(reported.asleepBy)).toBe('7:42 p.m.');
+  });
+
+  it('moves bedtime the same way on a home day, where an unconfirmed plan lapses', () => {
+    const days: DayLike[] = [
+      { date: SAT, override: { nap_start: '13:00', nap_end: '15:00' }, off_tag: null, no_nap: false, deleted_at: null }
+    ];
+    const planned = planBedtime(input([], t(SAT, '09:00'), { days }));
+    expect(clock(planned.asleepBy)).toBe('8:30 p.m.');
+    // Nobody is assuming a report at home: an hour past the planned end with no nap in, it is skipped.
+    const lapsed = planBedtime(input([], t(SAT, '16:30'), { days }));
+    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged by 4:00 p\.m\., so it counts as skipped/);
+    const napped = planBedtime(input([sleep('nap', SAT, '13:10', '14:00')], t(SAT, '17:00'), { days }));
+    expect(clock(napped.asleepBy)).toBe('7:42 p.m.');
   });
 });
 

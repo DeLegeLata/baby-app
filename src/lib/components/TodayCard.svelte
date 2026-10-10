@@ -1,6 +1,6 @@
 <script lang="ts">
   // Today at a glance: the fixed times that apply, and every sleep that
-  // belongs to today (last night included). The daycare nap has its own card.
+  // belongs to today (last night included). The nap has its own card.
   import { app } from '../state.svelte';
   import { ui } from '../ui.svelte';
   import { clock12, clockAt, dur, keyLabel } from '../format';
@@ -18,10 +18,6 @@
   const fixed = $derived.by(() => {
     const out: string[] = [];
     if (sched.mustBeUp !== null) out.push(`Up by ${clock12(sched.mustBeUp)}`);
-    // On a daycare day the Daycare card shows the nap.
-    if (!sched.daycare && sched.napStart !== null && sched.napEnd !== null) {
-      out.push(`Nap ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}`);
-    }
     if (sched.latestBedtime !== null) out.push(`Asleep by ${clock12(sched.latestBedtime)} at the latest`);
     for (const w of sched.noSleep) {
       out.push(`Stay awake ${clock12(w.start)} to ${clock12(w.end)}${w.label ? ` (${w.label})` : ''}`);

@@ -26,7 +26,7 @@ import {
   History,
   bathStatus,
   dayOf,
-  daycareEntry,
+  napEntry,
   guessKind,
   learn,
   phaseOf,
@@ -35,7 +35,7 @@ import {
   plannedReminders,
   type BathStatus,
   type BedtimePlan,
-  type DaycareEntry,
+  type NapEntry,
   type EngineInput,
   type Phase,
   type WakePlan
@@ -492,31 +492,32 @@ class AppState {
     return this.days.find((d) => d.date === date) ?? null;
   }
 
-  // --- The daycare card ----------------------------------------------------------
+  // --- The nap card --------------------------------------------------------------
 
-  /** The nap he had at daycare on a date: the nap marked daycare, else the first nap. */
-  daycareNap(date: DateKey): Sleep | null {
+  /** The nap the Nap card shows for a date: the nap marked daycare, else the first nap. */
+  napOn(date: DateKey): Sleep | null {
     const naps = this.sleepsOn(date).filter((s) => s.kind === 'nap');
     return naps.find((s) => s.place === 'daycare') ?? naps[0] ?? null;
   }
 
   /**
-   * Nap times from the Daycare card ('HH:MM'). Still to come, they become the
-   * day's planned window; already over, they become the nap itself.
+   * Nap times from the Nap card ('HH:MM'). Still to come, they become the
+   * day's planned window; already over, they become the nap itself, at daycare
+   * on a daycare day and in his bed on any other.
    */
-  async setDaycareNap(date: DateKey, from: string, to: string): Promise<DaycareEntry> {
-    const entry = daycareEntry(date, parseClock(from), parseClock(to), Date.now(), this.settings.time_zone);
+  async setNap(date: DateKey, from: string, to: string): Promise<NapEntry> {
+    const entry = napEntry(date, parseClock(from), parseClock(to), Date.now(), this.settings.time_zone);
     if (entry.kind === 'error') return entry;
     if (entry.kind === 'plan') {
       const override = { ...plain(this.dayRow(date)?.override ?? {}), nap_start: from, nap_end: to };
       await this.saveDay(date, { override, no_nap: false });
       return entry;
     }
-    const existing = this.daycareNap(date);
+    const existing = this.napOn(date);
     await this.saveSleep(existing?.id ?? null, 'nap', {
       asleep_at: new Date(entry.startAt).toISOString(),
       woke_at: new Date(entry.endAt).toISOString(),
-      place: existing?.place ?? 'daycare'
+      place: existing?.place ?? (this.history.schedule(date).daycare ? 'daycare' : 'bed')
     });
     if (this.dayRow(date)?.no_nap) await this.saveDay(date, { no_nap: false });
     return entry;
@@ -528,7 +529,7 @@ class AppState {
     await this.saveDay(date, { override: rest });
   }
 
-  /** Daycare reported no nap (or, with false, that he napped after all). */
+  /** No nap on a date, by daycare's report or a parent's (or, with false, that he napped after all). */
   async setNoNap(date: DateKey, noNap: boolean) {
     await this.saveDay(date, { no_nap: noNap });
   }

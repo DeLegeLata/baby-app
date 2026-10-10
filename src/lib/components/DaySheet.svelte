@@ -183,7 +183,7 @@
 
   <label class="check" style="margin-top: 12px">
     <input type="checkbox" bind:checked={noNap} />
-    <span>Daycare reported that he did not nap</span>
+    <span>He did not nap</span>
   </label>
 
   <label for="day-note">Note</label>

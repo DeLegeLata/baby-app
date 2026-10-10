@@ -223,13 +223,17 @@ the top of the engine.
 - **Put to bed** means into the crib, not asleep yet; **Fell asleep** is when he
   is actually asleep. Tapped straight from awake (the car, the stroller), Fell
   asleep asks what kind of sleep it is and where.
-- **The Daycare card** (on daycare days, under the status) holds today's
-  daycare nap. Times that are still to come are saved as the day's plan (say
-  daycare naps at 1:00 today); times already past are saved as the nap itself,
-  from their report at pickup. Either way tonight's bedtime moves at once, and
-  the card shows it. "He did not nap" and "No daycare today" sit on the same
-  card, each with an undo. Change today and Change tomorrow cover everything
-  else for a single date.
+- **The nap card** (every day, under the status) holds today's nap. On a
+  daycare day it is headed Daycare and holds the daycare nap; on any other day
+  it is headed Nap and holds his nap at home. Times that are still to come are
+  saved as the day's plan (say daycare naps at 1:00 today); times already past
+  are saved as the nap itself, from their report at pickup or from what you saw
+  at home. Either way tonight's bedtime moves at once, and the card shows it.
+  At home, a plan with no real times an hour after it should have ended counts
+  as no nap. "He did not nap" sits on the same card with an undo, and so does
+  "No daycare today" on a daycare day. While he is in bed or asleep the card
+  only says so, and the times come back once he is up. Change today and Change
+  tomorrow cover everything else for a single date.
 - **Add a sleep from earlier** (on the Today card, and Add under History) is for
   sleeps not logged at the time.
 

@@ -121,7 +121,7 @@ export type DayRow = SyncFields & {
   override: DayOverride;
   /** an unusual day: still shown, but left out of the learning */
   off_tag: OffTag | null;
-  /** daycare reported that he did not nap */
+  /** he did not nap: daycare's report, or a parent's on a home day */
   no_nap: boolean;
   note: string | null;
 };
