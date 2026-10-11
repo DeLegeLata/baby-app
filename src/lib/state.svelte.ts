@@ -33,9 +33,11 @@ import {
   planBedtime,
   planWake,
   plannedReminders,
+  suggestNap,
   type BathStatus,
   type BedtimePlan,
   type NapEntry,
+  type NapSuggestion,
   type EngineInput,
   type Phase,
   type WakePlan
@@ -124,6 +126,8 @@ class AppState {
   bedtime = $derived<BedtimePlan | null>(
     this.current?.kind === 'night' ? null : planBedtime(this.input, this.today)
   );
+  /** the nap to aim for today; null on a daycare day */
+  napSuggestion = $derived<NapSuggestion | null>(suggestNap(this.history, this.today));
   /** how long he usually takes to fall asleep, as learned */
   settle = $derived(Math.round(learn(this.history, this.today).settle));
 

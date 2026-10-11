@@ -1,8 +1,8 @@
 <script lang="ts">
   // Today's nap, adjusted where it is seen: daycare's nap on a daycare day, his
-  // nap at home on any other. Times still to come are the day's plan; times
-  // already past are what happened. Either way tonight's bedtime follows at
-  // once, and the card shows it.
+  // nap at home on any other, where the card also suggests when to have it.
+  // Times still to come are the day's plan; times already past are what
+  // happened. Either way tonight's bedtime follows at once, and the card shows it.
   import { untrack } from 'svelte';
   import { app } from '../state.svelte';
   import { clock12, clockAt, dur, tidy } from '../format';
@@ -19,6 +19,9 @@
   const live = $derived(Boolean(nap && !nap.woke_at));
   const override = $derived(app.dayRow(date)?.override ?? {});
   const changedWindow = $derived(Boolean(override.nap_start && override.nap_end));
+  // The nap to aim for on a home day; daycare sets its own.
+  const suggestion = $derived(app.napSuggestion);
+  const suggestedOver = $derived(suggestion !== null && minutesOf(date, app.minute, tz) > suggestion.upBy);
 
   let from = $state('');
   let to = $state('');
@@ -27,10 +30,11 @@
   let confirmRemove = $state(false);
   let filledFor = '';
 
-  // Fill the times from what is saved for today: the nap if it is in, else
-  // today's window. Refilled when that changes, never while typing.
+  // Fill the times from what is saved for today: the nap if it is in, else the
+  // day's own window, else the suggested nap. Refilled when that changes, never
+  // while typing.
   const source = $derived(
-    `${date}|${nap?.asleep_at ?? ''}|${nap?.woke_at ?? ''}|${sched.napStart}|${sched.napEnd}`
+    `${date}|${nap?.asleep_at ?? ''}|${nap?.woke_at ?? ''}|${sched.napStart}|${sched.napEnd}|${changedWindow}|${suggestion?.asleepBy}|${suggestion?.upBy}`
   );
   $effect(() => {
     void source;
@@ -43,6 +47,9 @@
     if (nap?.asleep_at && nap.woke_at) {
       from = clockString(minutesOf(date, nap.asleep_at, tz));
       to = clockString(minutesOf(date, nap.woke_at, tz));
+    } else if (suggestion && !changedWindow) {
+      from = clockString(suggestion.asleepBy);
+      to = clockString(suggestion.upBy);
     } else {
       from = clockString(sched.napStart ?? usualStart);
       to = clockString(sched.napEnd ?? usualEnd);
@@ -68,8 +75,13 @@
         ? `${clock12(parseClock(template.nap_start))} to ${clock12(parseClock(template.nap_end))}`
         : null;
     if (changedWindow && sched.napStart !== null && sched.napEnd !== null) {
+      const other = suggestion
+        ? `suggested ${clock12(suggestion.asleepBy)} to ${clock12(suggestion.upBy)}`
+        : usual
+          ? `usually ${usual}`
+          : '';
       return tidy(
-        `Planned for today: ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}${usual ? ` (usually ${usual})` : ''}.`
+        `Planned for today: ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}${other ? ` (${other})` : ''}.`
       );
     }
     if (sched.daycare) {
@@ -77,9 +89,14 @@
         ? tidy(`Usually ${usual}. Change the times if today is different, and enter their report at pickup.`)
         : 'Enter the nap times from their report at pickup.';
     }
-    return usual
-      ? tidy(`Usually ${usual}. Change the times if today is different, and enter the real ones once he is up.`)
-      : 'Enter the nap times once he is up.';
+    if (suggestion) {
+      return tidy(
+        suggestedOver
+          ? `Today's suggested nap was ${clock12(suggestion.asleepBy)} to ${clock12(suggestion.upBy)}. Enter the times he really slept.`
+          : `Suggested today: in bed ${clock12(suggestion.inBed)}, asleep by ${clock12(suggestion.asleepBy)}, up by ${clock12(suggestion.upBy)}. Enter the real times once he is up.`
+      );
+    }
+    return 'Enter the nap times once he is up.';
   });
 
   async function save() {
@@ -119,8 +136,16 @@
   <p class="muted" style="margin: 6px 0 4px">{status}</p>
 
   {#if !live}
+    {#if suggestion && !nap && !sched.noNap}
+      <details>
+        <summary>Why these times?</summary>
+        <ul>
+          {#each suggestion.reasons as reason}<li>{reason}</li>{/each}
+        </ul>
+      </details>
+    {/if}
     {#if changedWindow && !nap}
-      <button class="link" onclick={useUsual}>Use the usual time</button>
+      <button class="link" onclick={useUsual}>{suggestion ? 'Use the suggested time' : 'Use the usual time'}</button>
     {/if}
 
     <div class="grid2">

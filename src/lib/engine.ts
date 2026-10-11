@@ -63,6 +63,12 @@ export const TUNING = {
   lateCatnapCapMin: 30,
   /** a home-day nap not logged this long after the window ends counts as skipped */
   napGraceMin: 60,
+  /** the suggested home-day nap starts earlier or later by this share of how early or late he got up */
+  napWakeShare: 0.5,
+  /** by at most this much either way */
+  napShiftMaxMin: 60,
+  /** and it is never suggested shorter than this */
+  napMinMin: 60,
   /** half-width of the bedtime window, from his day-to-day spread */
   windowMinMin: 10,
   windowMaxMin: 25,
@@ -656,6 +662,97 @@ export function learn(h: History, before: DateKey): Learned {
   };
 }
 
+// --- The nap to aim for on a home day ---------------------------------------------------
+
+export type NapSuggestion = {
+  /** minutes from the date's midnight, each to the nearest five */
+  inBed: number;
+  asleepBy: number;
+  upBy: number;
+  reasons: string[];
+};
+
+/**
+ * The longest nap suggested at his age, in minutes: about the top of the normal
+ * range of daytime sleep (the mean plus 1.3 SD in Iglowstein et al., 2003).
+ */
+export function napCapMin(birth_at: string | null, now: number, timeZone: string): number {
+  if (!birth_at) return 150;
+  const months = ageInMonths(birth_at, now, timeZone);
+  if (months < 24) return 180;
+  if (months < 36) return 150;
+  if (months < 48) return 135;
+  return 120;
+}
+
+/**
+ * The nap to aim for on a home day; daycare sets its own. In toddlers a longer
+ * or later nap goes with a later, shorter night while total sleep stays the
+ * same (Nakagawa et al., 2016), so the end is the anchor: up by his usual nap
+ * end, never later. The start moves with how early or late he got up, and the
+ * nap stays between an hour and the cap for his age.
+ */
+export function suggestNap(
+  h: History,
+  date: DateKey,
+  learned: Learned = learn(h, date)
+): NapSuggestion | null {
+  const sched = h.schedule(date);
+  if (sched.daycare || sched.napStart === null || sched.napEnd === null) return null;
+
+  const five = (min: number) => Math.round(min / 5) * 5;
+  const cap = napCapMin(h.input.birth_at, h.input.now, h.tz);
+  const usualStart = learned.napEnd - learned.napLen;
+
+  // This morning is compared with his usual wake-up as it stood before it.
+  const usualWake = learn(h, addDays(date, -1)).wake;
+  const woke = h.facts(date).morningWake;
+  const morning = woke !== null && woke >= 4 * 60 && woke <= 10 * 60 ? woke : null;
+  const late = morning === null ? 0 : morning - usualWake;
+  const wanted = TUNING.napWakeShare * late;
+  const shift = Math.max(-TUNING.napShiftMaxMin, Math.min(TUNING.napShiftMaxMin, wanted));
+
+  let start = usualStart + shift;
+  const end = Math.min(learned.napEnd, start + cap);
+  const floored = end - start < TUNING.napMinMin;
+  if (floored) start = end - TUNING.napMinMin;
+
+  const asleepBy = five(start);
+  const upBy = five(end);
+  const usualEnd = five(learned.napEnd);
+  const settle = Math.round(learned.settle);
+  const inBed = five(start - settle);
+  const moved = Math.abs(asleepBy - five(usualStart));
+
+  const reasons: string[] = [];
+  reasons.push(
+    upBy < usualEnd
+      ? `Up by ${clock12(upBy)}, before his usual ${clock12(usualEnd)}: at his age the nap is held to ${dur(cap)}, because a longer nap comes out of his night.`
+      : `Up by ${clock12(upBy)}, when his naps usually end. A nap that ends later pushes his night later.`
+  );
+  if (morning === null) {
+    reasons.push('No wake-up is logged for this morning, so it is not moved for an early or late start to the day.');
+  } else if (moved === 0) {
+    reasons.push(
+      `He got up at ${clock12(morning)}, close to his usual ${clock12(usualWake)}, so it starts at his usual time.`
+    );
+  } else {
+    const most = wanted === shift ? '' : ' That is the most it moves.';
+    reasons.push(
+      late < 0
+        ? `He got up at ${clock12(morning)}, ${dur(-late)} before his usual ${clock12(usualWake)}, so it starts ${dur(moved)} earlier than usual.${most}`
+        : `He got up at ${clock12(morning)}, ${dur(late)} after his usual ${clock12(usualWake)}, so it starts ${dur(moved)} later than usual and is shorter.${most}`
+    );
+  }
+  if (floored) reasons.push(`It is kept to at least ${dur(TUNING.napMinMin)}.`);
+  reasons.push(`In bed by ${clock12(inBed)}: he usually takes about ${dur(settle)} to fall asleep.`);
+  reasons.push(
+    'From studies of toddlers: longer and later naps go with later, shorter nights, while total sleep stays about the same.'
+  );
+
+  return { inBed, asleepBy, upBy, reasons: reasons.map(tidy) };
+}
+
 // --- Tonight's bedtime ------------------------------------------------------------------
 
 export type BedtimePlan = {
@@ -692,7 +789,11 @@ export function planBedtime(input: EngineInput, onDate?: DateKey): BedtimePlan {
 
   let bed = learned.bedtime;
 
-  const scn = napScenario(facts, sched, learned.napLen, nowMin);
+  // On a home day he is expected to have the suggested nap, unless the day sets its own times.
+  const own = h.days.get(date)?.override ?? {};
+  const suggested = own.nap_start && own.nap_end ? null : suggestNap(h, date, learned);
+  const napSched = suggested ? { ...sched, napStart: suggested.asleepBy, napEnd: suggested.upBy } : sched;
+  const scn = napScenario(facts, napSched, learned.napLen, nowMin);
   if (scn.note) assumptions.push(scn.note);
   const nap = napEffect(scn, learned);
   bed += nap.minutes;

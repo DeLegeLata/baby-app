@@ -12,6 +12,7 @@ import {
   dstWakeShift,
   guessKind,
   learn,
+  napCapMin,
   phaseOf,
   planBedtime,
   planWake,
@@ -19,6 +20,7 @@ import {
   scheduleFor,
   dayIndex,
   sleepBand,
+  suggestNap,
   wakingMinutes,
   weeklySummary,
   type DayLike,
@@ -575,6 +577,94 @@ describe('the nap card', () => {
     expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged by 4:00 p\.m\., so it counts as skipped/);
     const napped = planBedtime(input([sleep('nap', SAT, '13:10', '14:00')], t(SAT, '17:00'), { days }));
     expect(clock(napped.asleepBy)).toBe('7:42 p.m.');
+  });
+});
+
+describe('the nap to aim for on a home day', () => {
+  const FRI = '2026-10-09';
+  const min = (clock: string) => parseClock(clock);
+  type Opts = Parameters<typeof input>[2];
+
+  /** Saturday's suggestion after a Friday night that ended at `up` (null: no night logged). */
+  const after = (up: string | null, opts: Opts = {}, earlier: SleepLike[] = []) => {
+    const night = up ? [sleep('night', FRI, '20:15', `+${up}`)] : [];
+    return suggestNap(new History(input([...earlier, ...night], t(SAT, '10:00'), opts)), SAT);
+  };
+
+  it('starts from his usual nap, with bed a settle earlier', () => {
+    const s = after(null)!;
+    expect(s).toMatchObject({ inBed: min('12:15'), asleepBy: min('12:30'), upBy: min('14:30') });
+    expect(s.reasons.join(' ')).toMatch(/No wake-up is logged for this morning/);
+    expect(s.reasons.join(' ')).not.toMatch(/held to/);
+  });
+
+  it('moves the start by half of how early or late he got up, and never moves the end later', () => {
+    const early = after('05:50')!;
+    expect(early).toMatchObject({ inBed: min('11:55'), asleepBy: min('12:10'), upBy: min('14:30') });
+    expect(early.reasons.join(' ')).toMatch(/40 min before his usual 6:30 a\.m\., so it starts 20 min earlier/);
+    const late = after('07:20')!;
+    expect(late).toMatchObject({ inBed: min('12:40'), asleepBy: min('12:55'), upBy: min('14:30') });
+    expect(late.reasons.join(' ')).toMatch(/50 min after his usual 6:30 a\.m\., so it starts 25 min later than usual and is shorter/);
+  });
+
+  it('moves the start an hour at most, and holds the nap to the cap for his age', () => {
+    const s = after('04:10')!;
+    expect(s).toMatchObject({ inBed: min('11:15'), asleepBy: min('11:30'), upBy: min('14:00') });
+    const why = s.reasons.join(' ');
+    expect(why).toMatch(/Up by 2:00 p\.m\., before his usual 2:30 p\.m\.: at his age the nap is held to 2 h 30 min/);
+    expect(why).toMatch(/so it starts 1 h earlier than usual\. That is the most it moves\./);
+  });
+
+  it('never suggests less than an hour', () => {
+    const settings = { schedule: { ...DEFAULT_SETTINGS.schedule, nap_start: '13:00' } };
+    const s = after('09:30', { settings })!;
+    expect(s).toMatchObject({ inBed: min('13:15'), asleepBy: min('13:30'), upBy: min('14:30') });
+    expect(s.reasons.join(' ')).toMatch(/It is kept to at least 1 h\./);
+  });
+
+  it('follows the naps he really has, not the window in Settings', () => {
+    const s = after(null, {}, normalDays(FRI, 14, '20:15', ['13:00', '15:00']))!;
+    expect(s).toMatchObject({ inBed: min('12:40'), asleepBy: min('12:55'), upBy: min('14:55') });
+    expect(s.reasons.join(' ')).toMatch(/He got up at 6:30 a\.m\., close to his usual 6:30 a\.m\./);
+  });
+
+  it('is for home days with a nap planned', () => {
+    const on = (date: string, opts: Opts = {}) =>
+      suggestNap(new History(input([], t(date, '10:00'), opts)), date);
+    const day = (date: string, daycare: boolean): DayLike[] => [
+      { date, override: { daycare }, off_tag: null, no_nap: false, deleted_at: null }
+    ];
+    expect(on(THU)).toBeNull();
+    expect(on(SAT)).not.toBeNull();
+    expect(on(THU, { days: day(THU, false) })).not.toBeNull();
+    expect(on(SAT, { days: day(SAT, true) })).toBeNull();
+    const noNap = { schedule: { ...DEFAULT_SETTINGS.schedule, nap_start: null, nap_end: null } };
+    expect(on(SAT, { settings: noNap })).toBeNull();
+  });
+
+  it('caps the nap by age, from the top of the normal range', () => {
+    const now = toMs(t(SAT, '10:00'));
+    const cap = (birth: string | null) => napCapMin(birth, now, TZ);
+    expect(cap('2025-06-01T12:00:00Z')).toBe(180); // 16 months
+    expect(cap('2024-09-01T12:00:00Z')).toBe(150); // 2 years
+    expect(cap('2023-06-01T12:00:00Z')).toBe(135); // 3 years
+    expect(cap('2022-06-01T12:00:00Z')).toBe(120); // 4 years
+    expect(cap(null)).toBe(150);
+  });
+
+  it("is the nap tonight's bedtime assumes, until the day sets its own times or it lapses", () => {
+    const night = [sleep('night', FRI, '20:15', '+04:10')];
+    // Suggested 11:30 to 2:00: it ends 30 min before his usual 2:30, so bedtime is 15 min earlier.
+    const morning = planBedtime(input(night, t(SAT, '09:00')));
+    expect(morning.assumptions.join(' ')).toMatch(/Planning on his nap, 11:30 a\.m\. to 2:00 p\.m\./);
+    expect(clock(morning.asleepBy)).toBe('8:00 p.m.');
+    const lapsed = planBedtime(input(night, t(SAT, '15:30')));
+    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged by 3:00 p\.m\., so it counts as skipped/);
+    const days: DayLike[] = [
+      { date: SAT, override: { nap_start: '13:00', nap_end: '15:00' }, off_tag: null, no_nap: false, deleted_at: null }
+    ];
+    const planned = planBedtime(input(night, t(SAT, '09:00'), { days }));
+    expect(planned.assumptions.join(' ')).toMatch(/Planning on his nap, 1:00 p\.m\. to 3:00 p\.m\./);
   });
 });
 

@@ -200,6 +200,18 @@ time?" list showing each step.
   nap (at most 90 minutes) when there was no nap, and a little later for a
   catnap after the nap. Until the daycare report is in, the app assumes the
   nap took the daycare window, and says so.
+- **The nap to aim for** is suggested on home days; daycare sets its own. He is
+  up by his usual nap end and never later, because in studies of toddlers a
+  longer or later nap went with a later, shorter night while total sleep in 24
+  hours stayed the same (Nakagawa et al., *Scientific Reports* 2016). The start
+  is his usual start, moved by half of however early or late he got up that
+  morning, an hour at most. The nap is never suggested under an hour or over
+  the cap for his age: 3 hours under age 2, 2½ at 2, 2¼ at 3 and 2 from age 4,
+  about the top of the normal range (Iglowstein et al., *Pediatrics* 2003). Bed
+  is his usual time to fall asleep before that, and the three times are rounded
+  to five minutes. The half share, the hour limits and the caps are judgment,
+  not findings: no study gives a best clock time. Until the real nap is
+  entered, tonight's bedtime assumes the suggested one.
 - **The schedule** then applies: never past the latest bedtime, early enough
   for his usual night before tomorrow's must-be-up, and clear of the times he
   must stay awake. There is no earliest bedtime.
@@ -229,8 +241,10 @@ the top of the engine.
   saved as the day's plan (say daycare naps at 1:00 today); times already past
   are saved as the nap itself, from their report at pickup or from what you saw
   at home. Either way tonight's bedtime moves at once, and the card shows it.
-  At home, a plan with no real times an hour after it should have ended counts
-  as no nap. "He did not nap" sits on the same card with an undo, and so does
+  On a home day the card also suggests the nap: when to be in bed, asleep and
+  up, with a "Why these times?" list, and the time boxes start on it. At home,
+  a suggested or planned nap with no real times an hour after it should have
+  ended counts as no nap. "He did not nap" sits on the same card with an undo, and so does
   "No daycare today" on a daycare day. While he is in bed or asleep the card
   only says so, and the times come back once he is up. Change today and Change
   tomorrow cover everything else for a single date.
