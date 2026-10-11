@@ -5,7 +5,7 @@
   import { ui } from '../ui.svelte';
   import { clock12, clockAt, dayLabel, dur, keyLabel } from '../format';
   import { KIND_LABEL, OFF_LABEL, type Sleep } from '../model';
-  import { activityEffects, chartRows, dayStats, netSleepMinutes, weeklySummary } from '../engine';
+  import { activityEffects, chartRows, dayStats, napEvidence, netSleepMinutes, weeklySummary } from '../engine';
   import { saveFile, sleepsCsv } from '../export';
   import SleepChart from './SleepChart.svelte';
 
@@ -15,6 +15,7 @@
   const tz = $derived(app.settings.time_zone);
   const summary = $derived(weeklySummary(app.input));
   const before = $derived(activityEffects(app.input));
+  const napNote = $derived(napEvidence(app.history, app.today).note);
   const nightEffects = $derived(before.effects.filter((e) => e.kind === 'night'));
   const napEffects = $derived(before.effects.filter((e) => e.kind === 'nap'));
   const rows = $derived(chartRows(app.input, app.today, DAYS));
@@ -96,6 +97,17 @@
       park and a good night, and a difference resting on a handful of nights can be chance.
     </p>
   {/if}
+</section>
+
+<section class="card">
+  <h3>Naps and bedtime</h3>
+  <p style="margin: 6px 0 0">{napNote}</p>
+  <p class="muted" style="margin: 10px 0 0">
+    This sets how long he took to fall asleep at night (Put to bed to Fell asleep) against when that day's nap ended,
+    over the last 8 weeks, recent days counting most and unusual days left out. When later naps clearly mean a longer
+    wait, the nap suggested on home days moves earlier, by half an hour at most and keeping its length. A pattern in
+    his own days, not proof.
+  </p>
 </section>
 
 <section class="card">

@@ -69,6 +69,19 @@ export const TUNING = {
   napShiftMaxMin: 60,
   /** and it is never suggested shorter than this */
   napMinMin: 60,
+  /** what his own nights say about the nap: the days looked at, and the half-life of a day's weight */
+  napOwnDays: 56,
+  napOwnHalfLifeDays: 28,
+  /** days with a nap, a time in bed and a time asleep before his nights say anything */
+  napOwnMinDays: 10,
+  /** and how much the nap end must vary across them (a spread, in minutes) */
+  napOwnMinSpreadMin: 10,
+  /** the least link that counts: minutes longer to fall asleep per minute later the nap ends */
+  napOwnMinSlope: 0.1,
+  /** a wait at bedtime this short needs no change to the nap */
+  napWaitTargetMin: 20,
+  /** the most his own nights move the nap earlier */
+  napOwnShiftMaxMin: 30,
   /** half-width of the bedtime window, from his day-to-day spread */
   windowMinMin: 10,
   windowMaxMin: 25,
@@ -685,12 +698,89 @@ export function napCapMin(birth_at: string | null, now: number, timeZone: string
   return 120;
 }
 
+export type NapEvidence = {
+  /** days with a finished nap, a time in bed and a time asleep that night */
+  days: number;
+  /** minutes longer he takes to fall asleep per minute later the nap ends; null until the link is clear */
+  waitPerMin: number | null;
+  /** how much earlier than usual the nap should run, in fives; 0 for no change */
+  earlier: number;
+  note: string;
+};
+
+/**
+ * What suits him, from his own days: the wait at bedtime (in bed to asleep) set
+ * against when that day's nap ended, recent days counting most. A clear link
+ * and a long wait move the nap earlier. The whole nap moves, so its length and
+ * his sleep in 24 hours are not cut.
+ */
+export function napEvidence(h: History, date: DateKey, learned: Learned = learn(h, date)): NapEvidence {
+  type Point = { x: number; y: number; w: number };
+  const pts: Point[] = [];
+  for (let i = 1; i <= TUNING.napOwnDays; i++) {
+    const f = h.facts(addDays(date, -i));
+    const wait = f.night?.settle;
+    if (f.off || !f.nap || f.nap.open || wait == null || wait < 0 || wait > 120) continue;
+    pts.push({ x: f.nap.end, y: wait, w: 0.5 ** ((i - 1) / TUNING.napOwnHalfLifeDays) });
+  }
+  const days = pts.length;
+  const none = (note: string): NapEvidence => ({ days, waitPerMin: null, earlier: 0, note });
+  if (days < TUNING.napOwnMinDays) {
+    return none(
+      `His own nights cannot say yet what suits him: ${days} of the ${TUNING.napOwnMinDays} days it takes have a nap, a time in bed and a time asleep.`
+    );
+  }
+
+  // A straight line through the days, each weighted by how recent it is.
+  const sum = (of: (p: Point) => number) => pts.reduce((s, p) => s + of(p), 0);
+  const w = sum((p) => p.w);
+  const xm = sum((p) => p.w * p.x) / w;
+  const ym = sum((p) => p.w * p.y) / w;
+  const sxx = sum((p) => p.w * (p.x - xm) ** 2);
+  if (Math.sqrt(sxx / w) < TUNING.napOwnMinSpreadMin) {
+    return none(
+      `His naps have ended at much the same time on the ${days} days it can use, so his own nights cannot say yet whether an earlier nap would help.`
+    );
+  }
+  const slope = sum((p) => p.w * (p.x - xm) * (p.y - ym)) / sxx;
+  // The link has to be twice its own uncertainty, counting the days at their weights.
+  const left = sum((p) => p.w * (p.y - ym - slope * (p.x - xm)) ** 2);
+  const counted = w ** 2 / sum((p) => p.w ** 2);
+  const error = Math.sqrt(left / (Math.max(counted - 2, 1) * sxx));
+  if (slope < TUNING.napOwnMinSlope || slope < 2 * error) {
+    return none(
+      `His own nights show no clear link yet between when the nap ends and how long he takes to fall asleep (${days} days).`
+    );
+  }
+
+  const link = `On his own nights each 30 min later the nap ends has gone with about ${dur(slope * 30)} longer to fall asleep (${days} days).`;
+  const usualWait = Math.max(0, ym + slope * (learned.napEnd - xm));
+  const wanted = (usualWait - TUNING.napWaitTargetMin) / slope;
+  const earlier = Math.max(0, Math.min(TUNING.napOwnShiftMaxMin, Math.round(wanted / 5) * 5));
+  if (earlier === 0) {
+    return {
+      days,
+      waitPerMin: slope,
+      earlier,
+      note: `${link} After a nap ending at his usual time he is asleep in about ${dur(usualWait)}, so it stays where it is.`
+    };
+  }
+  const most = wanted > TUNING.napOwnShiftMaxMin ? ', the most it moves,' : '';
+  return {
+    days,
+    waitPerMin: slope,
+    earlier,
+    note: `${link} Running the nap ${dur(earlier)} earlier${most} should bring that wait from about ${dur(usualWait)} to about ${dur(usualWait - slope * earlier)}.`
+  };
+}
+
 /**
  * The nap to aim for on a home day; daycare sets its own. In toddlers a longer
  * or later nap goes with a later, shorter night while total sleep stays the
  * same (Nakagawa et al., 2016), so the end is the anchor: up by his usual nap
- * end, never later. The start moves with how early or late he got up, and the
- * nap stays between an hour and the cap for his age.
+ * end, never later, and earlier when his own nights say so. The start moves
+ * with how early or late he got up, and the nap stays between an hour and the
+ * cap for his age.
  */
 export function suggestNap(
   h: History,
@@ -702,7 +792,11 @@ export function suggestNap(
 
   const five = (min: number) => Math.round(min / 5) * 5;
   const cap = napCapMin(h.input.birth_at, h.input.now, h.tz);
-  const usualStart = learned.napEnd - learned.napLen;
+  // His own nights can move the whole nap earlier; its length stays.
+  const own = napEvidence(h, date, learned);
+  const ownMove = own.earlier > 0;
+  const anchorEnd = learned.napEnd - own.earlier;
+  const usualStart = anchorEnd - learned.napLen;
 
   // This morning is compared with his usual wake-up as it stood before it.
   const usualWake = learn(h, addDays(date, -1)).wake;
@@ -713,7 +807,7 @@ export function suggestNap(
   const shift = Math.max(-TUNING.napShiftMaxMin, Math.min(TUNING.napShiftMaxMin, wanted));
 
   let start = usualStart + shift;
-  const end = Math.min(learned.napEnd, start + cap);
+  const end = Math.min(anchorEnd, start + cap);
   const floored = end - start < TUNING.napMinMin;
   if (floored) start = end - TUNING.napMinMin;
 
@@ -725,27 +819,35 @@ export function suggestNap(
   const moved = Math.abs(asleepBy - five(usualStart));
 
   const reasons: string[] = [];
-  reasons.push(
-    upBy < usualEnd
-      ? `Up by ${clock12(upBy)}, before his usual ${clock12(usualEnd)}: at his age the nap is held to ${dur(cap)}, because a longer nap comes out of his night.`
-      : `Up by ${clock12(upBy)}, when his naps usually end. A nap that ends later pushes his night later.`
-  );
+  if (upBy < five(anchorEnd)) {
+    reasons.push(
+      `Up by ${clock12(upBy)}, before his usual ${clock12(usualEnd)}: at his age the nap is held to ${dur(cap)}, because a longer nap comes out of his night.`
+    );
+  } else if (ownMove) {
+    reasons.push(
+      `Up by ${clock12(upBy)}, ${dur(own.earlier)} before his naps usually end, because his own nights go better after an earlier nap.`
+    );
+  } else {
+    reasons.push(`Up by ${clock12(upBy)}, when his naps usually end. A nap that ends later pushes his night later.`);
+  }
+  if (ownMove) reasons.push(own.note);
   if (morning === null) {
     reasons.push('No wake-up is logged for this morning, so it is not moved for an early or late start to the day.');
   } else if (moved === 0) {
     reasons.push(
-      `He got up at ${clock12(morning)}, close to his usual ${clock12(usualWake)}, so it starts at his usual time.`
+      `He got up at ${clock12(morning)}, close to his usual ${clock12(usualWake)}, so the morning does not move it.`
     );
   } else {
     const most = wanted === shift ? '' : ' That is the most it moves.';
     reasons.push(
       late < 0
-        ? `He got up at ${clock12(morning)}, ${dur(-late)} before his usual ${clock12(usualWake)}, so it starts ${dur(moved)} earlier than usual.${most}`
-        : `He got up at ${clock12(morning)}, ${dur(late)} after his usual ${clock12(usualWake)}, so it starts ${dur(moved)} later than usual and is shorter.${most}`
+        ? `He got up at ${clock12(morning)}, ${dur(-late)} before his usual ${clock12(usualWake)}, so it starts ${ownMove ? 'a further ' : ''}${dur(moved)} earlier${ownMove ? '' : ' than usual'}.${most}`
+        : `He got up at ${clock12(morning)}, ${dur(late)} after his usual ${clock12(usualWake)}, so it starts ${dur(moved)} later ${ownMove ? 'than that' : 'than usual'} and is shorter.${most}`
     );
   }
   if (floored) reasons.push(`It is kept to at least ${dur(TUNING.napMinMin)}.`);
   reasons.push(`In bed by ${clock12(inBed)}: he usually takes about ${dur(settle)} to fall asleep.`);
+  if (!ownMove) reasons.push(own.note);
   reasons.push(
     'From studies of toddlers: longer and later naps go with later, shorter nights, while total sleep stays about the same.'
   );

@@ -13,6 +13,7 @@ import {
   guessKind,
   learn,
   napCapMin,
+  napEvidence,
   phaseOf,
   planBedtime,
   planWake,
@@ -665,6 +666,70 @@ describe('the nap to aim for on a home day', () => {
     ];
     const planned = planBedtime(input(night, t(SAT, '09:00'), { days }));
     expect(planned.assumptions.join(' ')).toMatch(/Planning on his nap, 1:00 p\.m\. to 3:00 p\.m\./);
+  });
+});
+
+describe('what his own nights say about the nap', () => {
+  const FRI = '2026-10-09';
+  const min = (clock: string) => parseClock(clock);
+
+  /**
+   * Days up to Friday, naps ending 2:00 and 3:00 on alternate days, in bed at
+   * 8:00 each night and asleep at `early` after the 2:00 naps, `late` after the 3:00 ones.
+   */
+  const history = (early: string, late: string, days = 16): SleepLike[] => {
+    const out: SleepLike[] = [];
+    for (let i = 0; i < days; i++) {
+      const date = addDays(FRI, -i);
+      const later = i % 2 === 1;
+      out.push(sleep('nap', date, later ? '13:00' : '12:00', later ? '15:00' : '14:00'));
+      out.push(sleep('night', date, later ? late : early, '+06:30', { in_bed_at: t(date, '20:00') }));
+    }
+    return out;
+  };
+  const on = (sleeps: SleepLike[]) => new History(input(sleeps, t(SAT, '10:00')));
+
+  it('moves the whole nap earlier when later naps mean a long wait at bedtime', () => {
+    // 10 min to fall asleep after naps ending 2:00, 40 min after 3:00: half a minute per minute.
+    const h = on(history('20:10', '20:40'));
+    const own = napEvidence(h, SAT);
+    expect(own.days).toBe(16);
+    expect(own.waitPerMin).toBeCloseTo(0.5, 5);
+    expect(own.earlier).toBe(10);
+    expect(own.note).toMatch(/each 30 min later the nap ends has gone with about 15 min longer to fall asleep \(16 days\)/);
+    expect(own.note).toMatch(/Running the nap 10 min earlier should bring that wait from about 24 min to about 19 min/);
+    const s = suggestNap(h, SAT)!;
+    expect(s).toMatchObject({ asleepBy: min('12:20'), upBy: min('14:20') });
+    expect(s.upBy - s.asleepBy).toBe(120); // the nap keeps its length
+    expect(s.reasons[0]).toMatch(/Up by 2:20 p\.m\., 10 min before his naps usually end/);
+    expect(s.reasons[1]).toBe(own.note);
+  });
+
+  it('leaves the nap alone when he already falls asleep quickly', () => {
+    const h = on(history('20:05', '20:20'));
+    const own = napEvidence(h, SAT);
+    expect(own.waitPerMin).toBeCloseTo(0.25, 5);
+    expect(own.earlier).toBe(0);
+    expect(own.note).toMatch(/he is asleep in about 12 min, so it stays where it is/);
+    expect(suggestNap(h, SAT)).toMatchObject({ asleepBy: min('12:30'), upBy: min('14:30') });
+  });
+
+  it('moves it half an hour at most', () => {
+    const own = napEvidence(on(history('20:30', '21:30')), SAT);
+    expect(own.earlier).toBe(30);
+    expect(own.note).toMatch(/Running the nap 30 min earlier, the most it moves,/);
+  });
+
+  it('says nothing until there are enough days, enough spread and a clear link', () => {
+    expect(napEvidence(on(history('20:10', '20:40', 6)), SAT)).toMatchObject({ days: 6, earlier: 0 });
+    expect(napEvidence(on(history('20:10', '20:40', 6)), SAT).note).toMatch(/6 of the 10 days it takes/);
+    // The same wait whenever the nap ended: no link.
+    expect(napEvidence(on(history('20:30', '20:30')), SAT).note).toMatch(/no clear link yet/);
+    // Naps that all ended at 2:30 cannot show what an earlier one would do.
+    const same = normalDays(FRI, 16).map((s) => (s.kind === 'night' ? { ...s, in_bed_at: s.asleep_at } : s));
+    expect(napEvidence(on(same), SAT).note).toMatch(/ended at much the same time on the 16 days/);
+    // Without a time in bed there is no wait to learn from.
+    expect(napEvidence(on(normalDays(FRI, 16)), SAT).note).toMatch(/0 of the 10 days it takes/);
   });
 });
 

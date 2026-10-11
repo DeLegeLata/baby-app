@@ -212,6 +212,17 @@ time?" list showing each step.
   to five minutes. The half share, the hour limits and the caps are judgment,
   not findings: no study gives a best clock time. Until the real nap is
   entered, tonight's bedtime assumes the suggested one.
+- **What suits him** is learned from his own days, where "best" means he falls
+  asleep at night without a long wait. Over the last 8 weeks, recent days
+  counting most, the wait at bedtime (Put to bed to Fell asleep) is set against
+  when that day's nap ended. It needs 10 such days and naps that have ended at
+  different times, and the link has to be clear (twice its own uncertainty).
+  When later naps clearly mean a longer wait, and the wait after a nap ending
+  at his usual time is over 20 minutes, the whole suggested nap moves earlier,
+  half an hour at most, keeping its length so his sleep in 24 hours is not
+  cut. "Why these times?" and "Naps and bedtime" on the History screen say
+  what it has found, or what it is still waiting for. It is a pattern in one
+  child, not proof.
 - **The schedule** then applies: never past the latest bedtime, early enough
   for his usual night before tomorrow's must-be-up, and clear of the times he
   must stay awake. There is no earliest bedtime.
