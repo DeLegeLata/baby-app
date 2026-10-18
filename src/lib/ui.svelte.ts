@@ -13,6 +13,8 @@ class Ui {
   report = $state(false);
   /** the bath sheet: a new earlier bath (id null) or one to edit */
   bath = $state<{ id: string | null } | null>(null);
+  /** the screen or soother sheet: a new earlier session (id null) or one to edit */
+  habit = $state<{ id: string | null; kind: 'screen' | 'soother' } | null>(null);
 
   editSleep(id: string) {
     this.sleep = { id, preset: {} };

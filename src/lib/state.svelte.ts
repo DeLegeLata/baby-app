@@ -2,14 +2,17 @@
 // through db.ts and refresh it. The engine runs on the minute, not the second.
 import {
   createBath,
+  createHabit,
   createSleep,
   db,
   deleteBath,
+  deleteHabit,
   deleteSleep,
   getMeta,
   identity,
   liveBaths,
   liveDays,
+  liveHabits,
   liveSleeps,
   loadChild,
   loadSettings,
@@ -19,9 +22,20 @@ import {
   setMeta,
   unsentCount,
   updateBath,
+  updateHabit,
   updateSleep,
   type Identity
 } from './db';
+import {
+  screenDay,
+  sootherDay,
+  sootherWeek,
+  weanStatus,
+  type ScreenDay,
+  type SootherDay,
+  type SootherWeek,
+  type WeanStatus
+} from './habits';
 import {
   History,
   bathStatus,
@@ -50,6 +64,7 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Habit,
   type Mood,
   type Place,
   type Sleep,
@@ -80,6 +95,8 @@ class AppState {
   sleeps = $state<Sleep[]>([]);
   days = $state<DayRow[]>([]);
   baths = $state<Bath[]>([]);
+  /** screen time, daytime soother use and the weaning plan's stage changes */
+  habits = $state<Habit[]>([]);
   settings = $state<AppSettings>(DEFAULT_SETTINGS);
   child = $state<Child>({ name: 'Toddler', birth_at: null });
   who = $state<Identity | null>(null);
@@ -133,6 +150,12 @@ class AppState {
 
   /** the last bath, and whether one is due by the interval in Settings */
   bath = $derived<BathStatus>(bathStatus(this.input, this.today));
+
+  /** today's screens against the 1-hour guide and the hour before bed */
+  screen = $derived<ScreenDay>(screenDay(this.input, this.habits, this.today, this.bedtime?.inBedBy ?? null));
+  soother = $derived<SootherDay>(sootherDay(this.input, this.habits, this.today));
+  sootherWeek = $derived<SootherWeek>(sootherWeek(this.input, this.habits, this.today));
+  wean = $derived<WeanStatus>(weanStatus(this.input, this.habits, this.today));
 
   wake = $derived<WakePlan | null>(
     this.current?.kind === 'night' ? planWake(this.input, this.current) : null
@@ -285,6 +308,8 @@ class AppState {
       await db.days.bulkPut(days.map((d) => ({ ...repoint(d), id: dayId(next.child_id, d.date) })));
       const baths = (await db.baths.toArray()).filter((b) => !stays(b));
       await db.baths.bulkPut(baths.map(repoint));
+      const habits = (await db.habits.toArray()).filter((h) => !stays(h));
+      await db.habits.bulkPut(habits.map(repoint));
     }
 
     this.who = next;
@@ -359,6 +384,7 @@ class AppState {
     this.sleeps = await liveSleeps();
     this.days = await liveDays();
     this.baths = await liveBaths();
+    this.habits = await liveHabits();
     this.unsent = await unsentCount();
     this.now = Date.now();
     void this.planReminders();
@@ -391,12 +417,23 @@ class AppState {
     return this.baths.some((b) => Date.parse(b.at) <= now && now - Date.parse(b.at) <= 2 * 3_600_000) ? ['bath'] : [];
   }
 
+  /**
+   * A sleep is starting: a screen still on stops now, and so does a daytime
+   * soother, which then counts as going down with it.
+   */
+  private async endHabitsForSleep(at: string): Promise<{ soother?: boolean }> {
+    const running = this.habits.filter((h) => (h.kind === 'screen' || h.kind === 'soother') && !h.end_at);
+    for (const h of running) await updateHabit(h.id, { end_at: at });
+    return running.some((h) => h.kind === 'soother') ? { soother: true } : {};
+  }
+
   /** Into bed now. The kind follows the time of day and can be changed on the card. */
   putToBed() {
     const kind = guessKind(this.input, 'bed', Date.now());
     const activities = this.bathJustNow();
-    return this.act((who) =>
-      createSleep(who, kind, { in_bed_at: new Date().toISOString(), place: 'bed', activities })
+    const now = new Date().toISOString();
+    return this.act(async (who) =>
+      createSleep(who, kind, { in_bed_at: now, place: 'bed', activities, ...(await this.endHabitsForSleep(now)) })
     );
   }
 
@@ -405,11 +442,15 @@ class AppState {
     const now = new Date().toISOString();
     const cur = this.current;
     if (cur && !cur.asleep_at) {
-      return this.act(() => updateSleep(cur.id, { asleep_at: now, ...(kind ? { kind } : {}) }));
+      return this.act(async () =>
+        updateSleep(cur.id, { asleep_at: now, ...(kind ? { kind } : {}), ...(await this.endHabitsForSleep(now)) })
+      );
     }
     const chosen = kind ?? guessKind(this.input, 'asleep', Date.now());
     const activities = chosen === 'catnap' ? [] : this.bathJustNow();
-    return this.act((who) => createSleep(who, chosen, { asleep_at: now, place: place ?? null, activities }));
+    return this.act(async (who) =>
+      createSleep(who, chosen, { asleep_at: now, place: place ?? null, activities, ...(await this.endHabitsForSleep(now)) })
+    );
   }
 
   /** He never fell asleep: drop the in-bed record. */
@@ -473,6 +514,51 @@ class AppState {
 
   removeBath(id: string) {
     return this.act(() => deleteBath(id));
+  }
+
+  // --- Screens and the soother --------------------------------------------------------
+
+  /** A screen or a daytime soother, from now. Starting one that is already on does nothing. */
+  startHabit(kind: 'screen' | 'soother') {
+    if (this.habits.some((h) => h.kind === kind && !h.end_at)) return;
+    return this.act((who) => createHabit(who, kind, { start_at: new Date().toISOString() }));
+  }
+
+  /** Stops every running one of the kind, in case both phones started it. */
+  stopHabit(kind: 'screen' | 'soother') {
+    const running = this.habits.filter((h) => h.kind === kind && !h.end_at).map((h) => h.id);
+    if (!running.length) return;
+    const now = new Date().toISOString();
+    return this.act(async () => {
+      for (const id of running) await updateHabit(id, { end_at: now });
+    });
+  }
+
+  saveHabit(id: string | null, kind: 'screen' | 'soother', start_at: string, end_at: string | null, note: string | null) {
+    if (id) return this.act(() => updateHabit(id, { start_at, end_at, note }));
+    return this.act((who) => createHabit(who, kind, { start_at, end_at, note }));
+  }
+
+  removeHabit(id: string) {
+    return this.act(() => deleteHabit(id));
+  }
+
+  /** Whether he went down with the soother for a sleep (null: not said). */
+  setSleepSoother(id: string, soother: boolean | null) {
+    return this.act(() => updateSleep(id, { soother }));
+  }
+
+  /** Mark the open night waking as one where the soother went back in, or undo it. */
+  setWakingSoother(soother: boolean) {
+    const cur = this.current;
+    if (!cur) return;
+    const wakings = plain(cur.wakings).map((w) => (w.end ? w : { ...w, soother }));
+    return this.act(() => updateSleep(cur.id, { wakings }));
+  }
+
+  /** Move the weaning plan to a stage (1 to 4), or stop it (0). */
+  setWeanStage(stage: number) {
+    return this.act((who) => createHabit(who, 'wean', { start_at: new Date().toISOString(), stage }));
   }
 
   // --- Editing ------------------------------------------------------------------

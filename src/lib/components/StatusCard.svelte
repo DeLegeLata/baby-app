@@ -82,6 +82,22 @@
       selected={cur.activities ?? []}
       onchange={(next) => app.setActivities(cur.id, next)}
     />
+    <label for="with-soother">With the soother</label>
+    <div class="chips" id="with-soother" role="group">
+      <button aria-pressed={cur.soother === true} onclick={() => app.setSleepSoother(cur.id, cur.soother === true ? null : true)}>
+        Yes
+      </button>
+      <button aria-pressed={cur.soother === false} onclick={() => app.setSleepSoother(cur.id, cur.soother === false ? null : false)}>
+        No
+      </button>
+    </div>
+    {#if openWaking}
+      <div class="chips" style="margin-top: 8px" role="group" aria-label="This waking">
+        <button aria-pressed={Boolean(openWaking.soother)} onclick={() => app.setWakingSoother(!openWaking.soother)}>
+          Soother put back in
+        </button>
+      </div>
+    {/if}
   {/if}
 
   {#if justWoke}

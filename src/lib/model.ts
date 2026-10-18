@@ -60,8 +60,8 @@ export const OFF_LABEL: Record<OffTag, string> = {
   other: 'Unusual day'
 };
 
-/** A night waking. `end` is null while he is still awake. */
-export type Waking = { start: string; end: string | null };
+/** A night waking. `end` is null while he is still awake; `soother` when it was put back in. */
+export type Waking = { start: string; end: string | null; soother?: boolean };
 
 type SyncFields = {
   household_id: string;
@@ -90,6 +90,24 @@ export type Sleep = SyncFields & {
   note: string | null;
   /** what he did before this sleep (absent on rows logged before this field existed) */
   activities?: Activity[];
+  /** whether he went down with the soother; null or absent if nobody said */
+  soother?: boolean | null;
+};
+
+/**
+ * Screen time and daytime soother use, each with a start and an end (null while
+ * it runs), and the weaning plan's stage changes: a 'wean' row moves the plan to
+ * `stage` at start_at, and stage 0 stops it.
+ */
+export type HabitKind = 'screen' | 'soother' | 'wean';
+
+export type Habit = SyncFields & {
+  id: string;
+  kind: HabitKind;
+  start_at: string;
+  end_at: string | null;
+  stage: number | null;
+  note: string | null;
 };
 
 /** A bath. Baths given as part of a bedtime routine also count (see the "bath" activity). */
@@ -141,6 +159,23 @@ export const SLEEP_COLUMNS = [
   'mood',
   'note',
   'activities',
+  'soother',
+  'logged_by',
+  'rev',
+  'updated_at',
+  'deleted_at',
+  'schema_version'
+] as const;
+
+export const HABIT_COLUMNS = [
+  'id',
+  'household_id',
+  'child_id',
+  'kind',
+  'start_at',
+  'end_at',
+  'stage',
+  'note',
   'logged_by',
   'rev',
   'updated_at',

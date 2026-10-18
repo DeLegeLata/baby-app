@@ -281,3 +281,33 @@ the top of the engine.
   toddlers, plus one after a messy day. Settings holds the interval and the
   reminder time (empty for no reminder).
 
+## Screens and the soother
+
+Added 2026-10-17 (research/10). The update needs the latest
+`supabase/toddler.sql` run once in the SQL editor (step 4b) before the new
+version is published, or sync stops with a message saying so.
+
+- **Screens.** Screen on and Screen off on the Screens card, or An earlier
+  screen. The card gives the day's total against the Canadian Paediatric
+  Society guide (under 1 hour a day at ages 2 to 5). It adds a note when the
+  last screen ended less than an hour before bed: before he went to bed once he
+  has, else before tonight's planned in-bed time. While a screen is on, it says
+  when to turn it off to keep that hour clear. A screen still on at Put to bed
+  or Fell asleep stops then.
+- **The soother.** Soother in and Soother out on the Soother card are for the
+  day. While he is in bed or asleep, the Today screen asks "With the soother"
+  (Yes or No). During a night waking, "Soother put back in" marks that waking.
+  Both can also be set when editing a sleep. A daytime soother still in at Put
+  to bed stops and counts as going down with it.
+- **The weaning plan.** Start the plan on the Soother card. It has four
+  stages: sleep and comfort, then sleeps only, then night only, then gone. Each
+  has a rule for a "kept" day (see the card's "The four stages"). The card
+  shows kept days and his sleep since the stage began against the 2 weeks
+  before the plan. Once a stage has run 7 full days with 5 of the last 7 kept,
+  it suggests the next stage. Only a parent moves it, forward or back, or
+  stops it. Stage changes are rows in `habits` (kind `wean`), so both phones
+  agree.
+- **History.** "Screens and the soother" compares nights with a screen in the
+  hour before bed, and days over 1 hour, against the rest since screens were
+  first logged. It also compares sleeps with the soother against those without.
+

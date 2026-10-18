@@ -97,7 +97,7 @@ export type SleepLike = Pick<
   Sleep,
   'id' | 'kind' | 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'deleted_at'
 > &
-  Partial<Pick<Sleep, 'place' | 'mood' | 'note' | 'activities'>>;
+  Partial<Pick<Sleep, 'place' | 'mood' | 'note' | 'activities' | 'soother'>>;
 
 export type BathLike = Pick<Bath, 'id' | 'at' | 'deleted_at'> & Partial<Pick<Bath, 'note'>>;
 
@@ -1324,8 +1324,10 @@ export function weeklySummary(input: EngineInput): { lines: string[]; current: A
 
 export type Comparison = { with: number | null; without: number | null };
 
-export type ActivityEffect = {
-  activity: Activity;
+/** One comparison of his sleeps: those with something against those without it. */
+export type SleepEffect = {
+  key: string;
+  label: string;
   kind: 'night' | 'nap';
   withCount: number;
   withoutCount: number;
@@ -1340,10 +1342,59 @@ export type ActivityEffect = {
   line: string;
 };
 
+export type ActivityEffect = SleepEffect & { activity: Activity };
+
 export const ACTIVITY_MIN_EACH = 3;
 
 function mean(xs: number[]): number | null {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+}
+
+/** Minutes from going into bed to falling asleep, if both were logged and it is believable. */
+export function settleOf(s: SleepLike): number | null {
+  if (!s.in_bed_at || !s.asleep_at) return null;
+  const min = (toMs(s.asleep_at) - toMs(s.in_bed_at)) / MINUTE;
+  return min >= 0 && min <= 120 ? min : null;
+}
+
+function measureGroup(group: SleepLike[], kind: 'night' | 'nap') {
+  return {
+    settle: mean(group.map(settleOf).filter((x): x is number => x !== null)),
+    wakings: kind === 'night' ? mean(group.map((s) => (s.wakings ?? []).length)) : null,
+    length: mean(group.map((s) => netSleepMinutes(s, toMs(s.woke_at!))))
+  };
+}
+
+/**
+ * The sleeps in `pool` for which `has` holds, against the rest of the pool;
+ * null when none has it. Every sleep in the pool must have ended.
+ */
+export function compareSleeps(
+  pool: SleepLike[],
+  has: (s: SleepLike) => boolean,
+  kind: 'night' | 'nap',
+  key: string,
+  label: string
+): SleepEffect | null {
+  const withIt = pool.filter(has);
+  if (!withIt.length) return null;
+  const without = pool.filter((s) => !has(s));
+  const a = measureGroup(withIt, kind);
+  const b = measureGroup(without, kind);
+  const effect: SleepEffect = {
+    key,
+    label,
+    kind,
+    withCount: withIt.length,
+    withoutCount: without.length,
+    settle: { with: a.settle, without: b.settle },
+    wakings: { with: a.wakings, without: b.wakings },
+    length: { with: a.length, without: b.length },
+    enough: withIt.length >= ACTIVITY_MIN_EACH && without.length >= ACTIVITY_MIN_EACH,
+    line: ''
+  };
+  effect.line = describeEffect(effect);
+  return effect;
 }
 
 /**
@@ -1370,37 +1421,9 @@ export function activityEffects(
     });
     counts[kind] = pool.length;
 
-    const settle = (s: SleepLike) => {
-      if (!s.in_bed_at || !s.asleep_at) return null;
-      const min = (toMs(s.asleep_at) - toMs(s.in_bed_at)) / MINUTE;
-      return min >= 0 && min <= 120 ? min : null;
-    };
-    const measure = (group: SleepLike[]) => ({
-      settle: mean(group.map(settle).filter((x): x is number => x !== null)),
-      wakings: kind === 'night' ? mean(group.map((s) => (s.wakings ?? []).length)) : null,
-      length: mean(group.map((s) => netSleepMinutes(s, toMs(s.woke_at!))))
-    });
-
     for (const activity of ACTIVITIES) {
-      const withIt = pool.filter((s) => s.activities!.includes(activity));
-      if (!withIt.length) continue;
-      const without = pool.filter((s) => !s.activities!.includes(activity));
-      const a = measure(withIt);
-      const b = measure(without);
-      const enough = withIt.length >= ACTIVITY_MIN_EACH && without.length >= ACTIVITY_MIN_EACH;
-      const effect: ActivityEffect = {
-        activity,
-        kind,
-        withCount: withIt.length,
-        withoutCount: without.length,
-        settle: { with: a.settle, without: b.settle },
-        wakings: { with: a.wakings, without: b.wakings },
-        length: { with: a.length, without: b.length },
-        enough,
-        line: ''
-      };
-      effect.line = describeEffect(effect);
-      effects.push(effect);
+      const effect = compareSleeps(pool, (s) => s.activities!.includes(activity), kind, activity, ACTIVITY_LABEL[activity]);
+      if (effect) effects.push({ ...effect, activity });
     }
   }
 
@@ -1408,9 +1431,9 @@ export function activityEffects(
   return { nights: counts.night, naps: counts.nap, effects };
 }
 
-function describeEffect(e: ActivityEffect): string {
+function describeEffect(e: SleepEffect): string {
   const noun = e.kind === 'night' ? 'nights' : 'naps';
-  const label = ACTIVITY_LABEL[e.activity];
+  const label = e.label;
   if (!e.enough) {
     return `${label}: ${e.withCount} ${e.withCount === 1 ? noun.slice(0, -1) : noun} with it and ${e.withoutCount} without so far. The comparison appears once there are at least ${ACTIVITY_MIN_EACH} of each.`;
   }

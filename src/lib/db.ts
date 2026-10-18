@@ -11,6 +11,8 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Habit,
+  type HabitKind,
   type Sleep,
   type SleepKind
 } from './model';
@@ -25,6 +27,7 @@ class SleepDb extends Dexie {
   sleeps!: Table<Sleep, string>;
   days!: Table<DayRow, string>;
   baths!: Table<Bath, string>;
+  habits!: Table<Habit, string>;
 
   constructor() {
     super('baby-app');
@@ -38,6 +41,9 @@ class SleepDb extends Dexie {
     });
     this.version(3).stores({
       baths: 'id, at, synced'
+    });
+    this.version(4).stores({
+      habits: 'id, kind, start_at, synced'
     });
   }
 }
@@ -113,11 +119,17 @@ export async function liveBaths(): Promise<Bath[]> {
   return rows.filter((b) => !b.deleted_at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
+export async function liveHabits(): Promise<Habit[]> {
+  const rows = await db.habits.toArray();
+  return rows.filter((h) => !h.deleted_at).sort((a, b) => Date.parse(b.start_at) - Date.parse(a.start_at));
+}
+
 export async function unsentCount(): Promise<number> {
   const counts = await Promise.all([
     db.sleeps.where('synced').equals(0).count(),
     db.days.where('synced').equals(0).count(),
-    db.baths.where('synced').equals(0).count()
+    db.baths.where('synced').equals(0).count(),
+    db.habits.where('synced').equals(0).count()
   ]);
   return counts.reduce((a, b) => a + b, 0);
 }
@@ -139,7 +151,7 @@ export async function createSleep(
   who: Identity,
   kind: SleepKind,
   fields: Partial<
-    Pick<Sleep, 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'place' | 'mood' | 'note' | 'activities'>
+    Pick<Sleep, 'in_bed_at' | 'asleep_at' | 'woke_at' | 'wakings' | 'place' | 'mood' | 'note' | 'activities' | 'soother'>
   >
 ): Promise<Sleep> {
   const sleep: Sleep = {
@@ -153,6 +165,7 @@ export async function createSleep(
     mood: null,
     note: null,
     activities: [] as Activity[],
+    soother: null,
     ...fields,
     ...stamp(who)
   };
@@ -236,4 +249,35 @@ export async function updateBath(id: string, changes: Partial<Bath>): Promise<Ba
 /** Soft delete, so the delete reaches the other phone. */
 export async function deleteBath(id: string): Promise<void> {
   await updateBath(id, { deleted_at: new Date().toISOString() });
+}
+
+// --- Screens, the soother and weaning ---------------------------------------------------
+
+export async function createHabit(
+  who: Identity,
+  kind: HabitKind,
+  fields: Pick<Habit, 'start_at'> & Partial<Pick<Habit, 'end_at' | 'stage' | 'note'>>
+): Promise<Habit> {
+  const habit: Habit = { id: crypto.randomUUID(), kind, end_at: null, stage: null, note: null, ...fields, ...stamp(who) };
+  await db.habits.put(habit);
+  return habit;
+}
+
+export async function updateHabit(id: string, changes: Partial<Habit>): Promise<Habit | undefined> {
+  const current = await db.habits.get(id);
+  if (!current) return undefined;
+  const next: Habit = {
+    ...current,
+    ...changes,
+    rev: current.rev + 1,
+    updated_at: new Date().toISOString(),
+    synced: 0
+  };
+  await db.habits.put(next);
+  return next;
+}
+
+/** Soft delete, so the delete reaches the other phone. */
+export async function deleteHabit(id: string): Promise<void> {
+  await updateHabit(id, { deleted_at: new Date().toISOString() });
 }

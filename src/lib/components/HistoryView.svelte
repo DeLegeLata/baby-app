@@ -6,6 +6,7 @@
   import { clock12, clockAt, dayLabel, dur, keyLabel } from '../format';
   import { KIND_LABEL, OFF_LABEL, type Sleep } from '../model';
   import { activityEffects, chartRows, dayStats, napEvidence, netSleepMinutes, weeklySummary } from '../engine';
+  import { habitEffects } from '../habits';
   import { saveFile, sleepsCsv } from '../export';
   import SleepChart from './SleepChart.svelte';
 
@@ -18,6 +19,7 @@
   const napNote = $derived(napEvidence(app.history, app.today).note);
   const nightEffects = $derived(before.effects.filter((e) => e.kind === 'night'));
   const napEffects = $derived(before.effects.filter((e) => e.kind === 'nap'));
+  const habitLines = $derived(habitEffects(app.input, app.habits));
   const rows = $derived(chartRows(app.input, app.today, DAYS));
   const stats = $derived(dayStats(app.input, app.today, DAYS).reverse());
   const list = $derived(showAll ? app.sleeps : app.sleeps.slice(0, 30));
@@ -95,6 +97,25 @@
       These compare his own sleeps over the last 60 days, counting only those where at least one activity was
       recorded, and leaving out unusual days. They show patterns, not proof: a busy day can bring both a trip to the
       park and a good night, and a difference resting on a handful of nights can be chance.
+    </p>
+  {/if}
+</section>
+
+<section class="card">
+  <h3>Screens and the soother</h3>
+  {#if habitLines.length === 0}
+    <p class="muted" style="margin-top: 6px">
+      Use Screen on and off, and answer "With the soother" on his sleeps. After a few nights, this shows how they line
+      up with how quickly he falls asleep, how often he wakes and how long he sleeps.
+    </p>
+  {:else}
+    <ul class="reasons">
+      {#each habitLines as effect (effect.key)}<li>{effect.kind === 'nap' ? `Naps: ${effect.line}` : effect.line}</li>{/each}
+    </ul>
+    <p class="muted" style="margin: 10px 0 0">
+      The screen lines use the nights since the first screen was logged, so a day with screens that were not logged
+      counts as a day without. The soother lines use only sleeps where it was answered. Unusual days are left out.
+      Patterns, not proof.
     </p>
   {/if}
 </section>

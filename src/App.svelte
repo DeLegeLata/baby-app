@@ -8,6 +8,9 @@
   import BathCard from './lib/components/BathCard.svelte';
   import NapCard from './lib/components/NapCard.svelte';
   import BathSheet from './lib/components/BathSheet.svelte';
+  import ScreenCard from './lib/components/ScreenCard.svelte';
+  import SootherCard from './lib/components/SootherCard.svelte';
+  import HabitSheet from './lib/components/HabitSheet.svelte';
   import HistoryView from './lib/components/HistoryView.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
   import AsleepSheet from './lib/components/AsleepSheet.svelte';
@@ -105,6 +108,8 @@
     <StatusCard />
     <NapCard />
     <TodayCard />
+    <ScreenCard />
+    <SootherCard />
     <BathCard />
   {:else}
     <HistoryView />
@@ -135,5 +140,6 @@
 <DaySheet />
 <SettingsSheet />
 <BathSheet />
+<HabitSheet />
 <ConflictDialog />
 <ReportView />

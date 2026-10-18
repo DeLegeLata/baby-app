@@ -7,6 +7,7 @@ import { db, getMeta, setMeta } from './db';
 import {
   BATH_COLUMNS,
   DAY_COLUMNS,
+  HABIT_COLUMNS,
   SLEEP_COLUMNS,
   settingsSchema,
   toRow,
@@ -14,19 +15,22 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Habit,
   type Sleep
 } from './model';
 import { supabase } from './supabase';
 
-export type TableName = 'sleeps' | 'days' | 'baths';
-type Row = Sleep | DayRow | Bath;
+export type TableName = 'sleeps' | 'days' | 'baths' | 'habits';
+type Row = Sleep | DayRow | Bath | Habit;
 
 const COLUMNS: Record<TableName, readonly string[]> = {
   sleeps: SLEEP_COLUMNS,
   days: DAY_COLUMNS,
-  baths: BATH_COLUMNS
+  baths: BATH_COLUMNS,
+  habits: HABIT_COLUMNS
 };
-const TABLES: TableName[] = ['sleeps', 'days', 'baths'];
+// habits last, so a project still missing that table holds up only its own rows.
+const TABLES: TableName[] = ['sleeps', 'days', 'baths', 'habits'];
 
 const local = (table: TableName) => db[table] as unknown as Table<Row, string>;
 

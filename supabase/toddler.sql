@@ -90,6 +90,33 @@ create table if not exists baths (
 
 create index if not exists baths_household_updated on baths (household_id, updated_at);
 
+-- --- Screens, the soother and weaning ------------------------------------------------
+-- Whether he went down with the soother, on each sleep (null: not answered). A
+-- night waking where it was put back in carries "soother": true in wakings.
+alter table sleeps add column if not exists soother boolean;
+
+-- Screen time and daytime soother use, each with a start and an end (null while
+-- it is running), and the weaning plan's stage changes: a 'wean' row says the
+-- plan moved to `stage` at start_at (0 means the plan was stopped).
+create table if not exists habits (
+  id uuid primary key,
+  household_id uuid not null references households (id) on delete cascade,
+  child_id uuid not null references babies (id) on delete cascade,
+  kind text not null check (kind in ('screen', 'soother', 'wean')),
+  start_at timestamptz not null,
+  end_at timestamptz,
+  stage integer check (stage between 0 and 4),
+  note text,
+  logged_by uuid not null,
+  rev integer not null default 1,
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  schema_version integer not null default 1,
+  check (kind <> 'wean' or stage is not null)
+);
+
+create index if not exists habits_household_updated on habits (household_id, updated_at);
+
 -- The server stamps updated_at, so the pull never misses a row because one
 -- phone's clock runs behind the other's.
 create or replace function stamp_updated_at () returns trigger language plpgsql as $$
@@ -109,6 +136,10 @@ for each row execute function stamp_updated_at ();
 
 drop trigger if exists baths_stamp on baths;
 create trigger baths_stamp before insert or update on baths
+for each row execute function stamp_updated_at ();
+
+drop trigger if exists habits_stamp on habits;
+create trigger habits_stamp before insert or update on habits
 for each row execute function stamp_updated_at ();
 
 -- --- Reminders ------------------------------------------------------------------------
@@ -187,6 +218,7 @@ grant execute on function push_public_key () to authenticated;
 alter table sleeps enable row level security;
 alter table days enable row level security;
 alter table baths enable row level security;
+alter table habits enable row level security;
 alter table push_subscriptions enable row level security;
 alter table planned_reminders enable row level security;
 alter table push_keys enable row level security;
@@ -203,6 +235,11 @@ with
 
 drop policy if exists baths_rw on baths;
 create policy baths_rw on baths for all using (is_member (household_id))
+with
+  check (is_member (household_id));
+
+drop policy if exists habits_rw on habits;
+create policy habits_rw on habits for all using (is_member (household_id))
 with
   check (is_member (household_id));
 
@@ -233,6 +270,12 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table baths;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table habits;
 exception when duplicate_object then null;
 end $$;
 

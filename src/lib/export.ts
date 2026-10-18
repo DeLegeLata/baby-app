@@ -15,6 +15,8 @@ const COLUMNS = [
   'place',
   'mood',
   'before_sleep',
+  'with_soother',
+  'soother_put_back_in',
   'note',
   'deleted'
 ];
@@ -41,6 +43,8 @@ export function sleepsCsv(sleeps: Sleep[], timeZone: string, now = Date.now()): 
       s.place,
       s.mood,
       (s.activities ?? []).map((a) => ACTIVITY_LABEL[a]).join('; '),
+      s.soother === true ? 'yes' : s.soother === false ? 'no' : '',
+      s.wakings.filter((w) => w.soother).length || '',
       s.note,
       s.deleted_at ? 'yes' : ''
     ]);

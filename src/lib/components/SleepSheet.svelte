@@ -24,7 +24,8 @@
   let inBed = $state('');
   let asleep = $state('');
   let woke = $state('');
-  let wakings = $state<{ start: string; end: string }[]>([]);
+  let wakings = $state<{ start: string; end: string; soother: boolean }[]>([]);
+  let soother = $state<boolean | null>(null);
   let place = $state<Place | null>(null);
   let mood = $state<Mood | null>(null);
   let note = $state('');
@@ -55,7 +56,8 @@
     inBed = input(src.in_bed_at);
     asleep = input(src.asleep_at) || (draft.id ? '' : toLocalInput(new Date().toISOString(), tz));
     woke = input(src.woke_at);
-    wakings = (src.wakings ?? []).map((w) => ({ start: input(w.start), end: input(w.end) }));
+    wakings = (src.wakings ?? []).map((w) => ({ start: input(w.start), end: input(w.end), soother: Boolean(w.soother) }));
+    soother = (src.soother as boolean | null | undefined) ?? null;
     place = (src.place as Place | null) ?? null;
     mood = (src.mood as Mood | null) ?? null;
     note = (src.note as string | null) ?? '';
@@ -82,7 +84,7 @@
     for (const at of [inBedAt, asleepAt, wokeAt]) {
       if (at && Date.parse(at) > Date.now() + 60_000) return void (error = 'That time is still to come.');
     }
-    const nightWakings: { start: string; end: string | null }[] = [];
+    const nightWakings: { start: string; end: string | null; soother?: boolean }[] = [];
     if (kind === 'night') {
       for (const w of wakings) {
         const start = fromLocalInput(w.start, tz);
@@ -100,7 +102,7 @@
         if (wokeAt && (Date.parse(start) >= Date.parse(wokeAt) || (end && Date.parse(end) > Date.parse(wokeAt)))) {
           return void (error = 'A night waking runs past the morning wake.');
         }
-        nightWakings.push({ start, end });
+        nightWakings.push(w.soother ? { start, end, soother: true } : { start, end });
       }
       nightWakings.sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
     }
@@ -112,7 +114,8 @@
       place,
       mood,
       note: note.trim() || null,
-      activities
+      activities,
+      soother
     });
     close();
   }
@@ -157,14 +160,23 @@
           <input id="waking-start-{i}" type="datetime-local" bind:value={w.start} />
           <label for="waking-end-{i}">Back asleep (empty if still awake)</label>
           <input id="waking-end-{i}" type="datetime-local" bind:value={w.end} />
+          <div class="chips" style="margin-top: 6px">
+            <button aria-pressed={w.soother} onclick={() => (w.soother = !w.soother)}>Soother put back in</button>
+          </div>
         </div>
       {/each}
-      <button style="margin-top: 8px" onclick={() => wakings.push({ start: asleep, end: '' })}>Add a waking</button>
+      <button style="margin-top: 8px" onclick={() => wakings.push({ start: asleep, end: '', soother: false })}>Add a waking</button>
     </div>
   {/if}
 
   <label for="sleep-before">Before this sleep</label>
   <ActivityPicker id="sleep-before" selected={activities} onchange={(next) => (activities = next)} />
+
+  <label for="sleep-soother">With the soother</label>
+  <div class="chips" id="sleep-soother" role="group">
+    <button aria-pressed={soother === true} onclick={() => (soother = soother === true ? null : true)}>Yes</button>
+    <button aria-pressed={soother === false} onclick={() => (soother = soother === false ? null : false)}>No</button>
+  </div>
 
   <label for="place">Where</label>
   <div class="chips" id="place" role="group">
