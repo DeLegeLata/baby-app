@@ -16,6 +16,12 @@
   // shown as asleep from then, until a real time goes in.
   const assumedAt = $derived(cur && !cur.asleep_at && app.phase !== 'in_bed' ? app.asleepAssumed : null);
   const shown = $derived(cur && assumedAt !== null ? { ...cur, asleep_at: new Date(assumedAt).toISOString() } : cur);
+  // Up, no nap logged, and inside the nap window: shown as napping until it ends.
+  const napNow = $derived(
+    app.phase === 'awake' && app.napAssumed && app.napAssumed.start <= app.now && app.now < app.napAssumed.end
+      ? app.napAssumed
+      : null
+  );
 
   /** "in 1 h 25 min", "5 min ago" */
   function relative(target: number): string {
@@ -48,7 +54,15 @@
 </script>
 
 <section class="card status" aria-live="polite">
-  {#if app.phase === 'awake'}
+  {#if napNow}
+    <p class="muted">Nap (assumed)</p>
+    <p class="big">Asleep {dur((app.now - napNow.start) / 60_000)}</p>
+    <p class="muted">{tidy(`Since ${at(napNow.start)}, up about ${at(napNow.end)}.`)}</p>
+    <p class="muted">
+      No nap is logged, so his usual nap is assumed. If he is not napping, tap "He did not nap" on the
+      {app.todaySchedule.daycare ? 'Daycare' : 'Nap'} card.
+    </p>
+  {:else if app.phase === 'awake'}
     <p class="muted">Awake</p>
     <p class="big">
       {app.lastUp ? `Up ${since(app.now - app.lastUp.at)}` : 'Up'}

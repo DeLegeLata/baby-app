@@ -142,6 +142,8 @@ class AppState {
   todaySchedule = $derived(this.history.schedule(this.today));
   /** when he last got up, and what was assumed for it */
   lastUp = $derived(this.history.lastUp());
+  /** today's nap window, if no nap is logged and he did not skip it */
+  napAssumed = $derived(this.history.assumedNap());
 
   bedtime = $derived<BedtimePlan | null>(
     this.current?.kind === 'night' ? null : planBedtime(this.input, this.today)

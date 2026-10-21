@@ -400,6 +400,19 @@ describe('times nobody marked', () => {
     expect(evening.assumed).toMatch(/No nap is logged, so his usual nap, 12:30 p\.m\. to 2:30 p\.m\., is assumed/);
   });
 
+  it('takes the nap window as his nap while it runs, unless a nap is logged or he skipped it', () => {
+    const sleeps = [sleep('night', WED, '20:15', '+06:15')];
+    const during = new History(input(sleeps, t(THU, '13:45')));
+    const nap = during.assumedNap()!;
+    expect([clock(nap.start), clock(nap.end)]).toEqual(['12:30 p.m.', '2:30 p.m.']);
+    // Mid-nap the last wake-up is still the morning; the screen shows the nap instead.
+    expect(clock(during.lastUp()!.at)).toBe('6:15 a.m.');
+    const logged = [...sleeps, sleep('nap', THU, '12:40', '14:10')];
+    expect(new History(input(logged, t(THU, '13:45'))).assumedNap()).toBeNull();
+    const days: DayLike[] = [{ date: THU, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+    expect(new History(input(sleeps, t(THU, '13:45'), { days })).assumedNap()).toBeNull();
+  });
+
   it('prefers a logged wake-up, and skips the nap when he did not nap', () => {
     const sleeps = [inBedOnly(WED, '20:00', '+06:45')];
     const morning = new History(input(sleeps, t(THU, '09:00'))).lastUp()!;

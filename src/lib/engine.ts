@@ -407,6 +407,18 @@ export class History {
   }
 
   /**
+   * Today's nap as the day's nap window, when no nap is logged and nobody said
+   * he skipped it. While the window runs he is shown as napping.
+   */
+  assumedNap(): { start: number; end: number } | null {
+    const today = this.today();
+    const sched = this.schedule(today);
+    if (sched.noNap || sched.napStart === null || sched.napEnd === null) return null;
+    if ((this.byDay.get(today) ?? []).some((s) => s.kind === 'nap')) return null;
+    return { start: atMinutes(today, sched.napStart, this.tz), end: atMinutes(today, sched.napEnd, this.tz) };
+  }
+
+  /**
    * When he last got up, and what was assumed to get there: a nap nobody
    * marked over, today's nap if none is logged (unless he skipped it), and his
    * usual wake-up if last night is not logged at all. So the time he has been
@@ -424,12 +436,11 @@ export class History {
       }
     }
     const today = this.today();
-    const sched = this.schedule(today);
-    const napped = (this.byDay.get(today) ?? []).some((s) => s.kind === 'nap');
-    if (!napped && !sched.noNap && sched.napStart !== null && sched.napEnd !== null) {
+    const nap = this.assumedNap();
+    if (nap) {
       seen.push({
-        at: atMinutes(today, sched.napEnd, this.tz),
-        assumed: `No nap is logged, so his usual nap, ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}, is assumed.`
+        at: nap.end,
+        assumed: `No nap is logged, so his usual nap, ${clockAt(nap.start, this.tz)} to ${clockAt(nap.end, this.tz)}, is assumed.`
       });
     }
     if (!(this.byDay.get(addDays(today, -1)) ?? []).some((s) => s.kind === 'night')) {
