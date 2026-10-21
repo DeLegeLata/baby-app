@@ -135,10 +135,13 @@ class AppState {
       return open ? (this.sleeps.find((s) => s.id === open.id) ?? null) : null;
     })()
   );
-  phase = $derived<Phase>(phaseOf(this.current));
+  /** when he is taken to be asleep, if he is in bed and nobody marked him asleep */
+  asleepAssumed = $derived(this.current ? this.history.assumedAsleep(this.current) : null);
+  phase = $derived<Phase>(phaseOf(this.current, this.asleepAssumed, this.minute));
   today = $derived<DateKey>(this.history.today());
   todaySchedule = $derived(this.history.schedule(this.today));
-  lastWoke = $derived(this.history.lastWoke());
+  /** when he last got up, and what was assumed for it */
+  lastUp = $derived(this.history.lastUp());
 
   bedtime = $derived<BedtimePlan | null>(
     this.current?.kind === 'night' ? null : planBedtime(this.input, this.today)

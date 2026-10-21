@@ -30,7 +30,7 @@
   }
 
   function describe(row: ChartRow, s: ChartSegment) {
-    const what = s.kind === 'in_bed' ? 'In bed' : KIND_LABEL[s.kind];
+    const what = s.kind === 'in_bed' ? 'In bed' : `${KIND_LABEL[s.kind]}${s.assumed ? ' (assumed: not marked)' : ''}`;
     const from = s.start === 0 ? 'midnight' : clock12(s.start);
     const to = s.end >= 1440 ? 'midnight' : clock12(s.end);
     return `${rowLabel(row.date)}: ${what}, ${from} to ${to}`;
@@ -46,6 +46,7 @@
   <span><i class="key nap"></i>Nap</span>
   <span><i class="key catnap"></i>Catnap</span>
   <span><i class="key in_bed"></i>In bed, awake</span>
+  <span><i class="key night assumed"></i>Assumed</span>
   <span>* unusual day</span>
 </div>
 
@@ -78,7 +79,9 @@
           height={BAR}
           rx="2"
           fill={s.kind === 'in_bed' ? 'var(--series-night)' : `var(--series-${s.kind})`}
-          fill-opacity={s.kind === 'in_bed' ? 0.28 : 1}
+          fill-opacity={s.kind === 'in_bed' ? 0.28 : s.assumed ? 0.55 : 1}
+          stroke={s.assumed ? `var(--series-${s.kind})` : 'none'}
+          stroke-dasharray={s.assumed ? '2 2' : undefined}
         />
         <!-- a hit target taller and wider than the bar -->
         <rect

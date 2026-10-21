@@ -61,8 +61,12 @@ export const TUNING = {
   /** a catnap after the nap pushes bedtime later by half its length, up to 30 min of it */
   lateCatnapShare: 0.5,
   lateCatnapCapMin: 30,
-  /** a home-day nap not logged this long after the window ends counts as skipped */
+  /** a home-day nap not logged this long after the window ends is taken as had, and one left running as over */
   napGraceMin: 60,
+  /** a nap left running is taken as over at the end of the nap window, or this long after he fell asleep if later */
+  napAssumeMin: 60,
+  /** and a catnap this long after */
+  catnapAssumeMin: 30,
   /** the suggested home-day nap starts earlier or later by this share of how early or late he got up */
   napWakeShare: 0.5,
   /** by at most this much either way */
@@ -238,7 +242,8 @@ export function sleepBand(birth_at: string | null, now: number, timeZone: string
 
 // --- What happened on a date -------------------------------------------------------
 
-export type Span = { start: number; end: number; len: number; open: boolean };
+/** `assumed` when nobody marked the end and it is taken from the nap window (see History.assumedWoke). */
+export type Span = { start: number; end: number; len: number; open: boolean; assumed?: boolean };
 
 export type DayFacts = {
   date: DateKey;
@@ -289,9 +294,12 @@ export class History {
   private span(date: DateKey, s: SleepLike): Span | null {
     if (!s.asleep_at) return null;
     const start = minutesOf(date, s.asleep_at, this.tz);
-    const endAt = s.woke_at ? toMs(s.woke_at) : this.input.now;
+    const assumedEnd = s.woke_at ? null : this.assumedWoke(s);
+    const endAt = s.woke_at ? toMs(s.woke_at) : (assumedEnd ?? this.input.now);
     const len = Math.max(0, (endAt - toMs(s.asleep_at)) / MINUTE - wakingMinutes(s, endAt));
-    return { start, end: minutesOf(date, endAt, this.tz), len, open: !s.woke_at };
+    const span: Span = { start, end: minutesOf(date, endAt, this.tz), len, open: !s.woke_at && assumedEnd === null };
+    if (assumedEnd !== null) span.assumed = true;
+    return span;
   }
 
   facts(date: DateKey): DayFacts {
@@ -350,19 +358,91 @@ export class History {
     return facts;
   }
 
-  /** The running sleep, if any. */
+  /** The running sleep, if any. A nap left running long past its end no longer counts. */
   current(): SleepLike | null {
-    const open = this.sleeps.filter((s) => !s.woke_at);
+    const open = this.sleeps.filter((s) => !s.woke_at && this.assumedWoke(s) === null);
     return open.length ? open[open.length - 1] : null;
   }
 
-  /** When he last woke from any sleep. */
-  lastWoke(): number | null {
-    let latest: number | null = null;
-    for (const s of this.sleeps) {
-      if (s.woke_at) latest = Math.max(latest ?? 0, toMs(s.woke_at));
+  // Only one parent logs, so a missed tap is common. Where a time is missing
+  // the app takes the usual one: nothing is stored, any real time wins, and the
+  // learning never sees an assumed time.
+
+  /**
+   * When he is taken to have fallen asleep, for a sleep he was put to bed for
+   * but never marked asleep: at the latest bedtime for a night, the start of
+   * the nap window for a nap, or his usual settle after going down if he went
+   * down after that (and for a catnap). Null if he was marked asleep.
+   */
+  assumedAsleep(s: SleepLike): number | null {
+    if (s.asleep_at || !s.in_bed_at) return null;
+    const inBed = toMs(s.in_bed_at);
+    const date = dayOf(s, this.tz);
+    const sched = this.schedule(date);
+    const by = s.kind === 'night' ? sched.latestBedtime : s.kind === 'nap' ? sched.napStart : null;
+    if (by !== null) {
+      const at = atMinutes(date, by, this.tz);
+      if (at >= inBed) return at;
     }
-    return latest;
+    return inBed + Math.round(learn(this, date).settle) * MINUTE;
+  }
+
+  /**
+   * When a nap or catnap nobody marked over is taken to have ended: at the end
+   * of the nap window, or an hour after he fell asleep if that is later (half
+   * an hour for a catnap). Only once that is an hour past, so a long nap still
+   * running is not cut short; null until then, and for nights, which wait for
+   * "Up for the day".
+   */
+  assumedWoke(s: SleepLike): number | null {
+    if (s.woke_at || s.kind === 'night') return null;
+    // A sleep with no time asleep reaches here only for the live view, never from facts().
+    const asleep = s.asleep_at ? toMs(s.asleep_at) : this.assumedAsleep(s);
+    if (asleep === null) return null;
+    const date = dayOf(s, this.tz);
+    let end = asleep + (s.kind === 'nap' ? TUNING.napAssumeMin : TUNING.catnapAssumeMin) * MINUTE;
+    const napEnd = this.schedule(date).napEnd;
+    if (s.kind === 'nap' && napEnd !== null) end = Math.max(end, atMinutes(date, napEnd, this.tz));
+    return this.input.now >= end + TUNING.napGraceMin * MINUTE ? end : null;
+  }
+
+  /**
+   * When he last got up, and what was assumed to get there: a nap nobody
+   * marked over, today's nap if none is logged (unless he skipped it), and his
+   * usual wake-up if last night is not logged at all. So the time he has been
+   * up never runs on from a sleep that went unlogged.
+   */
+  lastUp(): { at: number; assumed: string | null } | null {
+    const seen: { at: number; assumed: string | null }[] = [];
+    for (const s of this.sleeps) {
+      if (s.woke_at) {
+        seen.push({ at: toMs(s.woke_at), assumed: null });
+      } else {
+        const end = this.assumedWoke(s);
+        const what = s.kind === 'nap' ? 'His nap' : 'The catnap';
+        if (end !== null) seen.push({ at: end, assumed: `${what} was not marked over, so it is taken as ending then.` });
+      }
+    }
+    const today = this.today();
+    const sched = this.schedule(today);
+    const napped = (this.byDay.get(today) ?? []).some((s) => s.kind === 'nap');
+    if (!napped && !sched.noNap && sched.napStart !== null && sched.napEnd !== null) {
+      seen.push({
+        at: atMinutes(today, sched.napEnd, this.tz),
+        assumed: `No nap is logged, so his usual nap, ${clock12(sched.napStart)} to ${clock12(sched.napEnd)}, is assumed.`
+      });
+    }
+    if (!(this.byDay.get(addDays(today, -1)) ?? []).some((s) => s.kind === 'night')) {
+      seen.push({
+        at: atMinutes(today, Math.round(learn(this, today).wake), this.tz),
+        assumed: 'Last night is not logged, so his usual wake-up time is assumed.'
+      });
+    }
+    // The latest that has happened; a logged time wins a tie. Logged times always
+    // count: the engine's clock moves once a minute, so one just logged can be ahead of it.
+    const past = seen.filter((u) => u.assumed === null || u.at <= this.input.now);
+    past.sort((a, b) => b.at - a.at || Number(a.assumed !== null) - Number(b.assumed !== null));
+    return past[0] ?? null;
   }
 
   /**
@@ -400,6 +480,14 @@ export function napScenario(
   nowMin: number
 ): NapScenario {
   const catnaps = facts.catnaps;
+  if (facts.nap?.assumed) {
+    return {
+      kind: 'assumed',
+      nap: facts.nap,
+      catnaps,
+      note: `His nap was not marked over, so it is taken as ending at ${clock12(facts.nap.end)}.`
+    };
+  }
   if (facts.nap && !facts.nap.open) {
     return { kind: 'actual', nap: facts.nap, catnaps, note: null };
   }
@@ -429,20 +517,14 @@ export function napScenario(
         note: `Assuming the daycare nap, ${window}. Add their report at pickup to update this.`
       };
     }
-    if (nowMin < sched.napEnd + TUNING.napGraceMin) {
-      return {
-        kind: 'assumed',
-        nap,
-        catnaps,
-        note: nowMin < sched.napStart ? `Planning on his nap, ${window}.` : `Assuming his nap, ${window}.`
-      };
-    }
-    return {
-      kind: 'skipped',
-      nap: null,
-      catnaps,
-      note: `No nap logged by ${clock12(sched.napEnd + TUNING.napGraceMin)}, so it counts as skipped.`
-    };
+    // Only one parent logs, so a nap nobody logged is taken as had; "He did not nap" says otherwise.
+    const note =
+      nowMin < sched.napStart
+        ? `Planning on his nap, ${window}.`
+        : nowMin < sched.napEnd + TUNING.napGraceMin
+          ? `Assuming his nap, ${window}.`
+          : `No nap logged, so assuming he napped ${window}. If he did not, tap "He did not nap" on the Nap card.`;
+    return { kind: 'assumed', nap, catnaps, note };
   }
   return { kind: 'skipped', nap: null, catnaps, note: 'No nap planned today.' };
 }
@@ -635,7 +717,7 @@ export function learn(h: History, before: DateKey): Learned {
     if (f.off) continue;
     const w = 0.5 ** ((i - 1) / TUNING.halfLifeDays);
     kept.push({ facts: f, w });
-    if (f.nap && !f.nap.open) {
+    if (f.nap && !f.nap.open && !f.nap.assumed) {
       napLen.add(f.nap.len, w);
       napEnd.add(f.nap.end, w);
     }
@@ -720,7 +802,7 @@ export function napEvidence(h: History, date: DateKey, learned: Learned = learn(
   for (let i = 1; i <= TUNING.napOwnDays; i++) {
     const f = h.facts(addDays(date, -i));
     const wait = f.night?.settle;
-    if (f.off || !f.nap || f.nap.open || wait == null || wait < 0 || wait > 120) continue;
+    if (f.off || !f.nap || f.nap.open || f.nap.assumed || wait == null || wait < 0 || wait > 120) continue;
     pts.push({ x: f.nap.end, y: wait, w: 0.5 ** ((i - 1) / TUNING.napOwnHalfLifeDays) });
   }
   const days = pts.length;
@@ -996,9 +1078,7 @@ export function planWake(input: EngineInput, night: SleepLike): WakePlan {
   const learned = learn(h, morning);
   const reasons: string[] = [];
 
-  const asleepAt = night.asleep_at
-    ? toMs(night.asleep_at)
-    : toMs(night.in_bed_at!) + learned.settle * MINUTE;
+  const asleepAt = night.asleep_at ? toMs(night.asleep_at) : h.assumedAsleep(night)!;
   const asleepMin = minutesOf(morning, asleepAt, tz);
   const band = sleepBand(input.birth_at, input.now, tz);
   // The day before this night: what he slept, or the daycare nap it assumed.
@@ -1009,7 +1089,7 @@ export function planWake(input: EngineInput, night: SleepLike): WakePlan {
   const enough = asleepMin + need + awake;
 
   reasons.push(
-    `${night.asleep_at ? 'Asleep' : 'In bed'} at ${clock12(asleepMin)}. His usual night is ${dur(need)}${
+    `${night.asleep_at ? 'Asleep' : 'Not marked asleep, so taken as asleep'} at ${clock12(asleepMin)}. His usual night is ${dur(need)}${
       awake >= 1 ? `, plus ${dur(awake)} awake in the night` : ''
     }: enough by ${clock12(enough)}.`
   );
@@ -1053,9 +1133,10 @@ export function planWake(input: EngineInput, night: SleepLike): WakePlan {
 
 export type Phase = 'awake' | 'in_bed' | 'asleep' | 'waking';
 
-export function phaseOf(s: SleepLike | null): Phase {
+/** In bed until he is marked asleep, or until the time he is taken to be asleep (History.assumedAsleep) has come. */
+export function phaseOf(s: SleepLike | null, assumedAsleep: number | null = null, now = 0): Phase {
   if (!s) return 'awake';
-  if (!s.asleep_at) return 'in_bed';
+  if (!s.asleep_at && (assumedAsleep === null || now < assumedAsleep)) return 'in_bed';
   return openWaking(s) ? 'waking' : 'asleep';
 }
 
@@ -1146,7 +1227,8 @@ export function plannedReminders(input: EngineInput, name: string): PlannedRemin
 
 // --- History views ----------------------------------------------------------------------------
 
-export type ChartSegment = { start: number; end: number; kind: SleepKind | 'in_bed' };
+/** `assumed` when he was not marked asleep, or a nap was not marked over, and the app took the usual time. */
+export type ChartSegment = { start: number; end: number; kind: SleepKind | 'in_bed'; assumed?: true };
 export type ChartRow = { date: DateKey; off: OffTag | null; overridden: boolean; segments: ChartSegment[] };
 
 /** Midnight-to-midnight rows, as a paediatric sleep diary draws them. */
@@ -1160,27 +1242,27 @@ export function chartRows(input: EngineInput, lastDate: DateKey, count: number):
     const dayEnd = atMinutes(date, DAY_MIN, tz);
     const toRowMin = (at: number) => Math.min(DAY_MIN, Math.max(0, minutesOf(date, at, tz)));
     const segments: ChartSegment[] = [];
-    const add = (from: number, to: number, kind: ChartSegment['kind']) => {
+    const add = (from: number, to: number, kind: ChartSegment['kind'], assumed = false) => {
       const a = Math.max(from, dayStart);
       const b = Math.min(to, dayEnd);
-      if (b > a) segments.push({ start: toRowMin(a), end: toRowMin(b), kind });
+      if (b > a) segments.push({ start: toRowMin(a), end: toRowMin(b), kind, ...(assumed ? { assumed: true } : {}) });
     };
     for (const s of h.sleeps) {
-      const end = s.woke_at ? toMs(s.woke_at) : input.now;
-      if (s.in_bed_at && s.asleep_at) add(toMs(s.in_bed_at), toMs(s.asleep_at), 'in_bed');
-      if (!s.asleep_at) {
-        if (s.in_bed_at) add(toMs(s.in_bed_at), end, 'in_bed');
-        continue;
-      }
+      const assumedEnd = s.woke_at ? null : h.assumedWoke(s);
+      const end = s.woke_at ? toMs(s.woke_at) : (assumedEnd ?? input.now);
+      const asleep = s.asleep_at ? toMs(s.asleep_at) : h.assumedAsleep(s);
+      if (s.in_bed_at) add(toMs(s.in_bed_at), Math.min(asleep ?? end, end), 'in_bed');
+      if (asleep === null || asleep >= end) continue;
+      const assumed = !s.asleep_at || assumedEnd !== null;
       // Asleep, with the night wakings cut out.
-      let from = toMs(s.asleep_at);
+      let from = asleep;
       const wakings = [...(s.wakings ?? [])].sort((a, b) => toMs(a.start) - toMs(b.start));
       for (const w of wakings) {
         const ws = toMs(w.start);
-        add(from, ws, s.kind);
+        add(from, ws, s.kind, assumed);
         from = w.end ? toMs(w.end) : end;
       }
-      add(from, end, s.kind);
+      add(from, end, s.kind, assumed);
     }
     const sched = h.schedule(date);
     rows.push({ date, off: sched.off, overridden: sched.overridden, segments });
@@ -1204,6 +1286,8 @@ export type NightStat = {
   note: string | null;
   /** what he did before that night */
   activities: Activity[];
+  /** he was not marked asleep, so `asleep` and `night` are assumed and left out of the averages */
+  assumed: boolean;
 };
 
 /** One line per date: his day and the night that followed it. */
@@ -1214,20 +1298,29 @@ export function dayStats(input: EngineInput, lastDate: DateKey, count: number): 
     const date = addDays(lastDate, -i);
     const f = h.facts(date);
     const n = f.night;
+    let asleep = n?.asleep ?? null;
+    let night = n?.net ?? null;
+    const taken = n && asleep === null ? h.assumedAsleep(n.sleep) : null;
+    const assumedAt = taken !== null && taken <= input.now ? taken : null;
+    if (n && assumedAt !== null) {
+      asleep = minutesOf(date, assumedAt, h.tz);
+      if (n.end !== null) night = Math.max(0, n.end - asleep - n.wakingMin);
+    }
     out.push({
       date,
       off: h.days.get(date)?.off_tag ?? null,
       inBed: n?.inBed ?? null,
-      asleep: n?.asleep ?? null,
+      asleep,
       up: n?.end != null ? n.end - DAY_MIN : null,
-      night: n?.net ?? null,
+      night,
       wakings: n?.wakings ?? 0,
       wakingMin: n?.wakingMin ?? 0,
       nap: f.nap,
       daySleep: f.daySleep,
-      total: n?.net != null ? n.net + f.daySleep : null,
+      total: night !== null ? night + f.daySleep : null,
       note: h.days.get(date)?.note ?? null,
-      activities: n?.sleep.activities ?? []
+      activities: n?.sleep.activities ?? [],
+      assumed: assumedAt !== null
     });
   }
   return out;
@@ -1250,13 +1343,13 @@ export function averages(stats: NightStat[]): Averages {
     const v = xs.filter((x): x is number => x !== null);
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
   };
-  const nights = usable.filter((s) => s.night !== null);
+  const nights = usable.filter((s) => s.night !== null && !s.assumed);
   return {
     days: nights.length,
     bedtime: avg(nights.map((s) => s.asleep)),
     up: avg(nights.map((s) => s.up)),
     night: avg(nights.map((s) => s.night)),
-    nap: avg(usable.filter((s) => s.nap && !s.nap.open).map((s) => s.daySleep)),
+    nap: avg(usable.filter((s) => s.nap && !s.nap.open && !s.nap.assumed).map((s) => s.daySleep)),
     total: avg(nights.map((s) => s.total)),
     wakings: nights.reduce((sum, s) => sum + s.wakings, 0),
     offDays: stats.length - usable.length

@@ -107,6 +107,7 @@
               <td>
                 {[
                   s.off ? OFF_LABEL[s.off] : '',
+                  s.assumed ? 'Not marked asleep: asleep time assumed, left out of the averages' : '',
                   s.activities.length ? `Before bed: ${s.activities.map((a) => ACTIVITY_LABEL[a].toLowerCase()).join(', ')}` : '',
                   s.note ?? ''
                 ]

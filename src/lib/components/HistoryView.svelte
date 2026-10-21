@@ -29,6 +29,7 @@
     let text = `${dayLabel(start, tz)}, ${clockAt(start, tz)}`;
     if (s.woke_at) text += ` to ${clockAt(Date.parse(s.woke_at), tz)}`;
     if (s.asleep_at) text += ` · ${dur(netSleepMinutes(s, app.now))}`;
+    else text += ' · not marked asleep';
     return text;
   }
 
@@ -61,15 +62,20 @@
             <tr>
               <td>{keyLabel(s.date)}{#if s.off}<br /><span class="muted">{OFF_LABEL[s.off]}</span>{/if}</td>
               <td>{s.daySleep ? dur(s.daySleep) : '-'}</td>
-              <td>{s.asleep !== null ? clock12(s.asleep) : '-'}</td>
+              <td>{s.asleep !== null ? clock12(s.asleep) : '-'}{s.assumed ? '*' : ''}</td>
               <td>{s.wakings ? `${s.wakings} (${dur(s.wakingMin)})` : '-'}</td>
               <td>{s.up !== null ? clock12(s.up) : '-'}</td>
-              <td>{s.night !== null ? dur(s.night) : '-'}</td>
+              <td>{s.night !== null ? dur(s.night) : '-'}{s.assumed && s.night !== null ? '*' : ''}</td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
+    {#if stats.some((s) => s.assumed)}
+      <p class="muted" style="margin: 6px 0 0">
+        * Assumed: he was put to bed but not marked asleep. Left out of the weekly averages and the learning.
+      </p>
+    {/if}
   </details>
 </section>
 

@@ -15,8 +15,11 @@
   const usualDays = $derived(app.settings.daycare_days.includes(isoWeekday(date)));
   const template = $derived(app.settings.schedule);
   const nap = $derived(app.napOn(date));
+  // Its times, taking the usual ones where nobody marked them (see History.assumedAsleep and assumedWoke).
+  const napStartAt = $derived(nap ? (nap.asleep_at ? Date.parse(nap.asleep_at) : app.history.assumedAsleep(nap)) : null);
+  const napEndAt = $derived(nap ? (nap.woke_at ? Date.parse(nap.woke_at) : app.history.assumedWoke(nap)) : null);
   // In bed or asleep right now: the buttons at the foot of the screen log it.
-  const live = $derived(Boolean(nap && !nap.woke_at));
+  const live = $derived(Boolean(nap && napEndAt === null));
   const override = $derived(app.dayRow(date)?.override ?? {});
   const changedWindow = $derived(Boolean(override.nap_start && override.nap_end));
   // The nap to aim for on a home day; daycare sets its own.
@@ -34,7 +37,7 @@
   // day's own window, else the suggested nap. Refilled when that changes, never
   // while typing.
   const source = $derived(
-    `${date}|${nap?.asleep_at ?? ''}|${nap?.woke_at ?? ''}|${sched.napStart}|${sched.napEnd}|${changedWindow}|${suggestion?.asleepBy}|${suggestion?.upBy}`
+    `${date}|${napStartAt ?? ''}|${napEndAt ?? ''}|${sched.napStart}|${sched.napEnd}|${changedWindow}|${suggestion?.asleepBy}|${suggestion?.upBy}`
   );
   $effect(() => {
     void source;
@@ -44,9 +47,9 @@
   function fill() {
     const usualStart = template.nap_start ? parseClock(template.nap_start) : 12 * 60 + 30;
     const usualEnd = template.nap_end ? parseClock(template.nap_end) : 14 * 60 + 30;
-    if (nap?.asleep_at && nap.woke_at) {
-      from = clockString(minutesOf(date, nap.asleep_at, tz));
-      to = clockString(minutesOf(date, nap.woke_at, tz));
+    if (napStartAt !== null && napEndAt !== null) {
+      from = clockString(minutesOf(date, napStartAt, tz));
+      to = clockString(minutesOf(date, napEndAt, tz));
     } else if (suggestion && !changedWindow) {
       from = clockString(suggestion.asleepBy);
       to = clockString(suggestion.upBy);
@@ -61,13 +64,15 @@
   }
 
   const status = $derived.by(() => {
-    if (nap?.asleep_at && nap.woke_at) {
-      const a = clockAt(Date.parse(nap.asleep_at), tz);
-      const b = clockAt(Date.parse(nap.woke_at), tz);
-      return tidy(`Napped ${a} to ${b} (${dur(netSleepMinutes(nap, app.now))}).`);
+    if (nap && napStartAt !== null && napEndAt !== null) {
+      const a = clockAt(napStartAt, tz);
+      const b = clockAt(napEndAt, tz);
+      if (nap.asleep_at && nap.woke_at) return tidy(`Napped ${a} to ${b} (${dur(netSleepMinutes(nap, app.now))}).`);
+      const missing = !nap.asleep_at && !nap.woke_at ? 'asleep or awake' : !nap.asleep_at ? 'asleep' : 'awake';
+      return tidy(`Taken as ${a} to ${b}: he was not marked ${missing}. Save the real times if you know them.`);
     }
     // The status card above has the running times.
-    if (nap?.asleep_at) return 'He is asleep now. Check the times here once he is up.';
+    if (napStartAt !== null && napStartAt <= app.now) return 'He is asleep now. Check the times here once he is up.';
     if (nap) return 'He is in bed, not asleep yet.';
     if (sched.noNap) return sched.daycare ? 'Daycare says he did not nap today.' : 'He did not nap today.';
     const usual =

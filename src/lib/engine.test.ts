@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   History,
   activityEffects,
+  averages,
   bathEvents,
   bathStatus,
   napEntry,
   type BathLike,
   chartRows,
   dayOf,
+  dayStats,
   dstBedtimeShift,
   dstWakeShift,
   guessKind,
@@ -117,12 +119,15 @@ describe("today's nap", () => {
     expect(plan.reasons.join(' ')).toMatch(/19 min earlier/);
   });
 
-  it('treats a home-day nap as skipped an hour after the window, and moves bedtime an hour earlier', () => {
+  it('takes a home-day nap nobody logged as had, until a parent says he did not nap', () => {
     const before = planBedtime(input([], t(SAT, '15:00')));
     expect(clock(before.asleepBy)).toBe('8:15 p.m.');
     const after = planBedtime(input([], t(SAT, '16:00')));
-    expect(clock(after.asleepBy)).toBe('7:15 p.m.');
-    expect(after.assumptions.join(' ')).toMatch(/counts as skipped/);
+    expect(clock(after.asleepBy)).toBe('8:15 p.m.');
+    expect(after.assumptions.join(' ')).toMatch(/No nap logged, so assuming he napped 12:30 p\.m\. to 2:30 p\.m\./);
+    const days: DayLike[] = [{ date: SAT, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+    const skipped = planBedtime(input([], t(SAT, '16:00'), { days }));
+    expect(clock(skipped.asleepBy)).toBe('7:15 p.m.');
   });
 
   it('takes the daycare report of no nap at its word', () => {
@@ -345,6 +350,87 @@ describe('days and phases', () => {
   });
 });
 
+describe('times nobody marked', () => {
+  const FRI = '2026-10-09';
+  const WED = '2026-10-07';
+  const inBedOnly = (date: string, inBed: string, woke: string | null = null): SleepLike => ({
+    ...sleep('night', date, inBed, woke),
+    asleep_at: null,
+    in_bed_at: t(date, inBed)
+  });
+
+  it('takes him as asleep at the latest bedtime when he went down before it', () => {
+    const night = inBedOnly(THU, '20:00');
+    const h = new History(input([night], t(THU, '20:10')));
+    const at = h.assumedAsleep(night)!;
+    expect(clock(at)).toBe('8:30 p.m.');
+    expect(phaseOf(night, at, toMs(t(THU, '20:29')))).toBe('in_bed');
+    expect(phaseOf(night, at, toMs(t(THU, '20:30')))).toBe('asleep');
+    expect(h.assumedAsleep(sleep('night', THU, '20:15', null))).toBeNull();
+  });
+
+  it('takes his usual settle after going down when that was after the latest bedtime', () => {
+    const night = inBedOnly(THU, '21:00');
+    expect(clock(new History(input([night], t(THU, '21:05'))).assumedAsleep(night)!)).toBe('9:15 p.m.');
+  });
+
+  it('plans the morning from the assumed time', () => {
+    const night = inBedOnly(THU, '20:00');
+    const plan = planWake(input([night], t(THU, '+01:00')), night);
+    expect(plan.reasons[0]).toMatch(/Not marked asleep, so taken as asleep at 8:30 p\.m\./);
+  });
+
+  it('shows the assumed night in the table but leaves it out of the averages and the learning', () => {
+    const night = inBedOnly(THU, '20:00', '+06:30');
+    const all = input([night], t(FRI, '12:00'));
+    const [stat] = dayStats(all, THU, 1);
+    expect(stat).toMatchObject({ inBed: 20 * 60, asleep: 20 * 60 + 30, night: 600, assumed: true });
+    expect(averages([stat]).days).toBe(0);
+    expect(learn(new History(all), FRI).nights).toBe(0);
+  });
+
+  it('never has him up for days when nights and naps went unlogged', () => {
+    // Up Wednesday at 6:30; Wednesday night was put down but never marked, then removed.
+    const sleeps = [sleep('night', '2026-10-06', '20:15', '+06:30')];
+    const morning = new History(input(sleeps, t(THU, '09:00'))).lastUp()!;
+    expect(clock(morning.at)).toBe('6:30 a.m.');
+    expect(morning.assumed).toMatch(/Last night is not logged/);
+    const evening = new History(input(sleeps, t(THU, '17:00'))).lastUp()!;
+    expect(clock(evening.at)).toBe('2:30 p.m.');
+    expect(evening.assumed).toMatch(/No nap is logged, so his usual nap, 12:30 p\.m\. to 2:30 p\.m\., is assumed/);
+  });
+
+  it('prefers a logged wake-up, and skips the nap when he did not nap', () => {
+    const sleeps = [inBedOnly(WED, '20:00', '+06:45')];
+    const morning = new History(input(sleeps, t(THU, '09:00'))).lastUp()!;
+    expect(clock(morning.at)).toBe('6:45 a.m.');
+    expect(morning.assumed).toBeNull();
+    const days: DayLike[] = [{ date: THU, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+    expect(clock(new History(input(sleeps, t(THU, '17:00'), { days })).lastUp()!.at)).toBe('6:45 a.m.');
+    // Logged a few seconds into the minute the engine sees as now.
+    const just = [inBedOnly(WED, '20:00'), { ...inBedOnly(THU, '13:00'), kind: 'nap' as const }];
+    just[1].woke_at = new Date(toMs(t(THU, '14:40')) + 30_000).toISOString();
+    expect(new History(input(just, t(THU, '14:40'))).lastUp()).toMatchObject({ assumed: null });
+  });
+
+  it('takes a nap left running as over an hour after it should have ended', () => {
+    const nap = sleep('nap', THU, '13:45', null);
+    const running = new History(input([nap], t(THU, '15:30')));
+    expect(running.current()?.id).toBe(nap.id);
+    const later = new History(input([nap], t(THU, '16:00')));
+    expect(later.current()).toBeNull();
+    // An hour after he fell asleep is later than the 2:30 end of the window.
+    expect(clock(later.lastUp()!.at)).toBe('2:45 p.m.');
+    expect(later.lastUp()!.assumed).toMatch(/not marked over/);
+    expect(later.facts(THU).nap).toMatchObject({ open: false, assumed: true, len: 60 });
+    expect(planBedtime(input([nap], t(THU, '16:00'))).assumptions.join(' ')).toMatch(
+      /not marked over, so it is taken as ending at 2:45 p\.m\./
+    );
+    // The learning keeps to naps someone marked over.
+    expect(learn(new History(input([nap], t(FRI, '10:00'))), FRI).napEnd).toBe(14 * 60 + 30);
+  });
+});
+
 describe('reminders', () => {
   it('plans the routine reminder while he is awake, and the wake reminder overnight', () => {
     const day = plannedReminders(input([], t(THU, '10:00')), 'Sam');
@@ -372,6 +458,15 @@ describe('history', () => {
     expect(rows[1].segments).toEqual([
       { start: 0, end: 120, kind: 'night' },
       { start: 150, end: 390, kind: 'night' }
+    ]);
+  });
+
+  it('draws a night nobody marked asleep as assumed from the latest bedtime', () => {
+    const night = { ...sleep('night', THU, '20:15', '+06:30'), asleep_at: null, in_bed_at: t(THU, '20:00') };
+    const rows = chartRows(input([night], t('2026-10-09', '12:00')), THU, 1);
+    expect(rows[0].segments).toEqual([
+      { start: 20 * 60, end: 20 * 60 + 30, kind: 'in_bed' },
+      { start: 20 * 60 + 30, end: 24 * 60, kind: 'night', assumed: true }
     ]);
   });
 
@@ -567,15 +662,16 @@ describe('the nap card', () => {
     expect(clock(reported.asleepBy)).toBe('7:42 p.m.');
   });
 
-  it('moves bedtime the same way on a home day, where an unconfirmed plan lapses', () => {
+  it('moves bedtime the same way on a home day, where an unlogged plan is taken as had', () => {
     const days: DayLike[] = [
       { date: SAT, override: { nap_start: '13:00', nap_end: '15:00' }, off_tag: null, no_nap: false, deleted_at: null }
     ];
     const planned = planBedtime(input([], t(SAT, '09:00'), { days }));
     expect(clock(planned.asleepBy)).toBe('8:30 p.m.');
-    // Nobody is assuming a report at home: an hour past the planned end with no nap in, it is skipped.
+    // Only one parent logs: an hour past the planned end with no nap in, it still counts.
     const lapsed = planBedtime(input([], t(SAT, '16:30'), { days }));
-    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged by 4:00 p\.m\., so it counts as skipped/);
+    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged, so assuming he napped 1:00 p\.m\. to 3:00 p\.m\./);
+    expect(clock(lapsed.asleepBy)).toBe('8:30 p.m.');
     const napped = planBedtime(input([sleep('nap', SAT, '13:10', '14:00')], t(SAT, '17:00'), { days }));
     expect(clock(napped.asleepBy)).toBe('7:42 p.m.');
   });
@@ -653,14 +749,15 @@ describe('the nap to aim for on a home day', () => {
     expect(cap(null)).toBe(150);
   });
 
-  it("is the nap tonight's bedtime assumes, until the day sets its own times or it lapses", () => {
+  it("is the nap tonight's bedtime assumes, logged or not, until the day sets its own times", () => {
     const night = [sleep('night', FRI, '20:15', '+04:10')];
     // Suggested 11:30 to 2:00: it ends 30 min before his usual 2:30, so bedtime is 15 min earlier.
     const morning = planBedtime(input(night, t(SAT, '09:00')));
     expect(morning.assumptions.join(' ')).toMatch(/Planning on his nap, 11:30 a\.m\. to 2:00 p\.m\./);
     expect(clock(morning.asleepBy)).toBe('8:00 p.m.');
     const lapsed = planBedtime(input(night, t(SAT, '15:30')));
-    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged by 3:00 p\.m\., so it counts as skipped/);
+    expect(lapsed.assumptions.join(' ')).toMatch(/No nap logged, so assuming he napped 11:30 a\.m\. to 2:00 p\.m\./);
+    expect(clock(lapsed.asleepBy)).toBe('8:00 p.m.');
     const days: DayLike[] = [
       { date: SAT, override: { nap_start: '13:00', nap_end: '15:00' }, off_tag: null, no_nap: false, deleted_at: null }
     ];

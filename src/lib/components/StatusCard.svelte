@@ -3,6 +3,7 @@
   // up, the morning wake while a night is running. Every recommendation can be
   // opened up to show why the app chose it.
   import { app } from '../state.svelte';
+  import { ui } from '../ui.svelte';
   import { clockAt, dur, since, tidy } from '../format';
   import { KIND_LABEL, MOODS, MOOD_LABEL, SLEEP_KINDS } from '../model';
   import { netSleepMinutes, wakingMinutes } from '../engine';
@@ -11,6 +12,10 @@
   const tz = $derived(app.settings.time_zone);
   const at = (ms: number) => clockAt(ms, tz);
   const cur = $derived(app.current);
+  // In bed, never marked asleep, and past the time he is taken to be asleep:
+  // shown as asleep from then, until a real time goes in.
+  const assumedAt = $derived(cur && !cur.asleep_at && app.phase !== 'in_bed' ? app.asleepAssumed : null);
+  const shown = $derived(cur && assumedAt !== null ? { ...cur, asleep_at: new Date(assumedAt).toISOString() } : cur);
 
   /** "in 1 h 25 min", "5 min ago" */
   function relative(target: number): string {
@@ -32,11 +37,11 @@
   const openWaking = $derived(nightWakings.find((w) => !w.end) ?? null);
 
   const sinceLine = $derived.by(() => {
-    if (!cur?.asleep_at) return '';
-    let line = `Since ${at(Date.parse(cur.asleep_at))}.`;
+    if (!shown?.asleep_at) return '';
+    let line = `Since ${at(Date.parse(shown.asleep_at))}.`;
     if (nightWakings.length) {
       const times = nightWakings.length === 1 ? 'once' : `${nightWakings.length} times`;
-      line += ` Woke ${times} (${dur(wakingMinutes(cur, app.now))} awake).`;
+      line += ` Woke ${times} (${dur(wakingMinutes(shown, app.now))} awake).`;
     }
     return tidy(line);
   });
@@ -46,10 +51,11 @@
   {#if app.phase === 'awake'}
     <p class="muted">Awake</p>
     <p class="big">
-      {app.lastWoke ? `Up ${since(app.now - app.lastWoke)}` : 'Up'}
+      {app.lastUp ? `Up ${since(app.now - app.lastUp.at)}` : 'Up'}
     </p>
-    {#if app.lastWoke}
-      <p class="muted">since {at(app.lastWoke)}</p>
+    {#if app.lastUp}
+      <p class="muted">since {at(app.lastUp.at)}</p>
+      {#if app.lastUp.assumed}<p class="muted">{app.lastUp.assumed}</p>{/if}
     {/if}
   {:else if app.phase === 'in_bed' && cur}
     <p class="muted">In bed for {KIND_LABEL[cur.kind].toLowerCase()}</p>
@@ -57,15 +63,22 @@
     <p class="muted">
       {tidy(`In bed at ${at(Date.parse(cur.in_bed_at!))}.`)} He usually takes about
       {dur(app.settle)} to fall asleep.
+      {#if app.asleepAssumed !== null}If nobody marks it, he is taken as asleep at {tidy(`${at(app.asleepAssumed)}.`)}{/if}
     </p>
-  {:else if app.phase === 'waking' && cur && openWaking}
+  {:else if app.phase === 'waking' && shown && openWaking}
     <p class="muted">Awake in the night</p>
     <p class="big">Awake {since(app.now - Date.parse(openWaking.start))}</p>
-    <p class="muted">{tidy(`Asleep since ${at(Date.parse(cur.asleep_at!))}.`)}</p>
-  {:else if cur}
-    <p class="muted">{cur.kind === 'night' ? 'Asleep for the night' : `${KIND_LABEL[cur.kind]}`}</p>
-    <p class="big">Asleep {dur(netSleepMinutes(cur, app.now))}</p>
+    <p class="muted">{tidy(`Asleep since ${at(Date.parse(shown.asleep_at!))}.`)}</p>
+  {:else if shown}
+    <p class="muted">{shown.kind === 'night' ? 'Asleep for the night' : `${KIND_LABEL[shown.kind]}`}</p>
+    <p class="big">Asleep {dur(netSleepMinutes(shown, app.now))}</p>
     <p class="muted">{sinceLine}</p>
+  {/if}
+  {#if cur && assumedAt !== null}
+    <p class="muted">
+      Not marked asleep, so taken as asleep at {tidy(`${at(assumedAt)}.`)}
+      <button class="link" onclick={() => ui.editSleep(cur.id)}>Set the real time</button>
+    </p>
   {/if}
 
   {#if cur}

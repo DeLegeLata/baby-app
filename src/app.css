@@ -303,6 +303,11 @@ ul.sleeps time {
 .key.in_bed {
   background: color-mix(in srgb, var(--series-night) 28%, transparent);
 }
+.key.assumed {
+  background: color-mix(in srgb, var(--series-night) 55%, transparent);
+  outline: 1px dashed var(--series-night);
+  outline-offset: -1px;
+}
 
 /* Tables (history, report) */
 table.stats {

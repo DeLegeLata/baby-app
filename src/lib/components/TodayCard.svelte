@@ -30,6 +30,10 @@
     const range = `${clockAt(Date.parse(start), tz)}${s.woke_at ? ` to ${clockAt(Date.parse(s.woke_at), tz)}` : ', still going'}`;
     const bits = [range];
     if (s.asleep_at) bits.push(dur(netSleepMinutes(s, app.now)));
+    else {
+      const taken = app.history.assumedAsleep(s);
+      if (taken !== null && taken <= app.now) bits.push(`not marked asleep, taken as ${clockAt(taken, tz)}`);
+    }
     if (s.wakings.length) bits.push(`${s.wakings.length} waking${s.wakings.length === 1 ? '' : 's'}`);
     if (s.place && s.place !== 'bed') bits.push(PLACE_LABEL[s.place].toLowerCase());
     if (s.mood) bits.push(MOOD_LABEL[s.mood].toLowerCase());
