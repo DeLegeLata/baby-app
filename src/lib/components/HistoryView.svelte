@@ -83,7 +83,7 @@
   <h3>Before sleep</h3>
   {#if before.effects.length === 0}
     <p class="muted" style="margin-top: 6px">
-      Choose what he did before a sleep from the list under "Before this sleep" on the Today screen, or when editing a
+      Choose what he did before a sleep from the list under "Before this sleep" on the Sleep tab, or when editing a
       sleep. After a few nights, this shows how each activity lines up with how quickly he falls asleep, how often he
       wakes and how long he sleeps.
     </p>

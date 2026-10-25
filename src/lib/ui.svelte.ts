@@ -4,8 +4,11 @@ import type { DateKey } from './time';
 
 export type SleepDraft = { id: string | null; preset: Partial<Sleep> };
 
+export type Tab = 'sleep' | 'habits' | 'bath' | 'history';
+
 class Ui {
-  tab = $state<'today' | 'history'>('today');
+  /** the tab at the foot of the screen; the app always opens on Sleep */
+  tab = $state<Tab>('sleep');
   sleep = $state<SleepDraft | null>(null);
   day = $state<DateKey | null>(null);
   settings = $state(false);

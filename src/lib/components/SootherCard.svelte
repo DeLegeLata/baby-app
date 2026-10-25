@@ -39,7 +39,7 @@
     <button class="ghost" onclick={() => (ui.habit = { id: null, kind: 'soother' })}>An earlier time...</button>
   </div>
   <p class="muted" style="margin: 8px 0 0">
-    In and out are for the day. For sleeps, answer "With the soother" on the Today screen while he is in bed, or when
+    In and out are for the day. For sleeps, answer "With the soother" on the Sleep tab while he is in bed, or when
     editing a sleep. A soother still in when he goes down stops here and counts for that sleep.
   </p>
 

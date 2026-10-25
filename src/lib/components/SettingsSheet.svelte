@@ -138,7 +138,7 @@
 
   <hr class="soft" />
   <h3>His daily schedule</h3>
-  <p class="muted">Every day, weekends included. Change a single date from the Today screen.</p>
+  <p class="muted">Every day, weekends included. Change a single date from the Sleep tab.</p>
 
   <div class="grid2">
     <div>

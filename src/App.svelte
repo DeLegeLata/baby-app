@@ -13,6 +13,7 @@
   import HabitSheet from './lib/components/HabitSheet.svelte';
   import HistoryView from './lib/components/HistoryView.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
+  import TabBar from './lib/components/TabBar.svelte';
   import AsleepSheet from './lib/components/AsleepSheet.svelte';
   import SleepSheet from './lib/components/SleepSheet.svelte';
   import DaySheet from './lib/components/DaySheet.svelte';
@@ -70,11 +71,6 @@
     <button class="ghost" onclick={() => (ui.settings = true)}>Settings</button>
   </div>
 
-  <div class="tabs" role="group" aria-label="Screens">
-    <button aria-pressed={ui.tab === 'today'} onclick={() => (ui.tab = 'today')}>Today</button>
-    <button aria-pressed={ui.tab === 'history'} onclick={() => (ui.tab = 'history')}>History</button>
-  </div>
-
   {#if installEvent}
     <p class="banner">
       Add Sleep to this phone's home screen so it opens like an app.
@@ -104,12 +100,14 @@
     <SignIn />
   {/if}
 
-  {#if ui.tab === 'today'}
+  {#if ui.tab === 'sleep'}
     <StatusCard />
     <NapCard />
     <TodayCard />
+  {:else if ui.tab === 'habits'}
     <ScreenCard />
     <SootherCard />
+  {:else if ui.tab === 'bath'}
     <BathCard />
   {:else}
     <HistoryView />
@@ -133,7 +131,11 @@
   {/if}
 </main>
 
-<ActionBar />
+<!-- The sleep buttons on every tab, so bedtime is one tap from anywhere; the tabs under them. -->
+<div class="dock no-print">
+  <ActionBar />
+  <TabBar />
+</div>
 
 <AsleepSheet />
 <SleepSheet />
