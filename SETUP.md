@@ -85,7 +85,11 @@ group by 1, 2;
 It should report one household, one baby and **2** members.
 
 Then turn **off** new sign-ups in Authentication → Sign In / Providers, so the
-two accounts are the only ones.
+two accounts are the only ones. In Authentication → URL Configuration, set the
+Site URL to `https://delegelata.github.io/baby-app/` and add
+`https://delegelata.github.io/baby-app/**` and
+`https://delegelata.github.io/watch-pick/**` as redirect URLs, so a
+password-reset email opens the app rather than `localhost`.
 
 ### 4b. Add the toddler
 

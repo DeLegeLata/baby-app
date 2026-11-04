@@ -118,8 +118,10 @@ create table if not exists habits (
 create index if not exists habits_household_updated on habits (household_id, updated_at);
 
 -- The server stamps updated_at, so the pull never misses a row because one
--- phone's clock runs behind the other's.
-create or replace function stamp_updated_at () returns trigger language plpgsql as $$
+-- phone's clock runs behind the other's. Both triggers pin an empty
+-- search_path, which Supabase's Security Advisor asks for.
+create or replace function stamp_updated_at () returns trigger language plpgsql
+set search_path = '' as $$
 begin
   new.updated_at := now();
   return new;
@@ -180,7 +182,8 @@ where sent_at is null;
 
 -- A reminder that was cancelled (the night began, or he was up) and is then
 -- planned again (he went back down) is due again, even if it went out before.
-create or replace function replan_reminder () returns trigger language plpgsql as $$
+create or replace function replan_reminder () returns trigger language plpgsql
+set search_path = '' as $$
 begin
   if new.send_at is not null and old.send_at is null then
     new.sent_at := null;
