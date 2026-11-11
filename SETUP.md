@@ -97,7 +97,7 @@ The SQL editor runs SQL, not file names: open
 [`supabase/toddler.sql`](supabase/toddler.sql) on GitHub, use **Copy raw file**
 (the two-squares button above the code), paste it into a new query in the SQL
 editor, and run it. It adds the toddler's row (marked `role = 'toddler'`), the
-`sleeps`, `days` and `baths` tables, the reminder tables, their row-level
+`sleeps`, `days`, `baths`, `habits` and `growth` tables, the reminder tables, their row-level
 security and realtime, and a reminder secret kept in Supabase Vault. Running it
 again is harmless, and is how a later version of the file is applied: after an
 update, paste and run it once more. The last query should list the household
@@ -314,4 +314,24 @@ version is published, or sync stops with a message saying so.
 - **History.** "Screens and the soother" compares nights with a screen in the
   hour before bed, and days over 1 hour, against the rest since screens were
   first logged. It also compares sleeps with the soother against those without.
+
+## Growth
+
+- **The Growth tab** keeps his weight and height on a date (either one alone
+  is fine): Add a measurement, with a date, kilograms and centimetres (a comma
+  works as the decimal point, and the pounds or feet-and-inches show as you
+  type). Older measurements from checkups go in with their own dates.
+- **Percentiles** come from the WHO Child Growth Standards for boys, birth to
+  5 years, the tables behind the WHO Growth Charts for Canada.
+  `src/lib/who-growth.ts` holds WHO's L, M and S values (every day of the first
+  four weeks, then every 7th day); `src/lib/growth.ts` reads them in a straight
+  line between kept days, within 0.005 SD of WHO's daily tables. Each chart
+  shows the 3rd, 15th, 50th, 85th and 97th percentile curves over the last year
+  to three months ahead, widened back to his oldest measurement. Under 2 the
+  height standard is lying-down length; from 2, standing height (the curves
+  step down about 0.7 cm at the second birthday). The birth date in Settings
+  sets his age; without it the measurements are listed with no percentile.
+- Measurements are rows in `growth` (grams and millimetres), synced like the
+  rest. Until the SQL step has added the table, the pull skips it, and a
+  measurement waiting to go up shows the "run the SQL" message.
 

@@ -11,6 +11,7 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Growth,
   type Habit,
   type HabitKind,
   type Sleep,
@@ -28,6 +29,7 @@ class SleepDb extends Dexie {
   days!: Table<DayRow, string>;
   baths!: Table<Bath, string>;
   habits!: Table<Habit, string>;
+  growth!: Table<Growth, string>;
 
   constructor() {
     super('baby-app');
@@ -44,6 +46,9 @@ class SleepDb extends Dexie {
     });
     this.version(4).stores({
       habits: 'id, kind, start_at, synced'
+    });
+    this.version(5).stores({
+      growth: 'id, measured_on, synced'
     });
   }
 }
@@ -124,12 +129,19 @@ export async function liveHabits(): Promise<Habit[]> {
   return rows.filter((h) => !h.deleted_at).sort((a, b) => Date.parse(b.start_at) - Date.parse(a.start_at));
 }
 
+/** Oldest first, the order the growth charts draw them in. */
+export async function liveGrowth(): Promise<Growth[]> {
+  const rows = await db.growth.toArray();
+  return rows.filter((g) => !g.deleted_at).sort((a, b) => a.measured_on.localeCompare(b.measured_on));
+}
+
 export async function unsentCount(): Promise<number> {
   const counts = await Promise.all([
     db.sleeps.where('synced').equals(0).count(),
     db.days.where('synced').equals(0).count(),
     db.baths.where('synced').equals(0).count(),
-    db.habits.where('synced').equals(0).count()
+    db.habits.where('synced').equals(0).count(),
+    db.growth.where('synced').equals(0).count()
   ]);
   return counts.reduce((a, b) => a + b, 0);
 }
@@ -249,6 +261,35 @@ export async function updateBath(id: string, changes: Partial<Bath>): Promise<Ba
 /** Soft delete, so the delete reaches the other phone. */
 export async function deleteBath(id: string): Promise<void> {
   await updateBath(id, { deleted_at: new Date().toISOString() });
+}
+
+// --- Growth ---------------------------------------------------------------------------
+
+export type GrowthFields = Pick<Growth, 'measured_on' | 'weight_g' | 'height_mm' | 'note'>;
+
+export async function createGrowth(who: Identity, fields: GrowthFields): Promise<Growth> {
+  const row: Growth = { id: crypto.randomUUID(), ...fields, ...stamp(who) };
+  await db.growth.put(row);
+  return row;
+}
+
+export async function updateGrowth(id: string, changes: Partial<Growth>): Promise<Growth | undefined> {
+  const current = await db.growth.get(id);
+  if (!current) return undefined;
+  const next: Growth = {
+    ...current,
+    ...changes,
+    rev: current.rev + 1,
+    updated_at: new Date().toISOString(),
+    synced: 0
+  };
+  await db.growth.put(next);
+  return next;
+}
+
+/** Soft delete, so the delete reaches the other phone. */
+export async function deleteGrowth(id: string): Promise<void> {
+  await updateGrowth(id, { deleted_at: new Date().toISOString() });
 }
 
 // --- Screens, the soother and weaning ---------------------------------------------------

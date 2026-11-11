@@ -117,6 +117,15 @@ export type Bath = SyncFields & {
   note: string | null;
 };
 
+/** His weight and height on a date. Either can be missing; grams and millimetres keep them whole. */
+export type Growth = SyncFields & {
+  id: string;
+  measured_on: DateKey;
+  weight_g: number | null;
+  height_mm: number | null;
+  note: string | null;
+};
+
 export type NoSleepWindow = { start: string; end: string; label: string };
 
 /**
@@ -188,6 +197,21 @@ export const BATH_COLUMNS = [
   'household_id',
   'child_id',
   'at',
+  'note',
+  'logged_by',
+  'rev',
+  'updated_at',
+  'deleted_at',
+  'schema_version'
+] as const;
+
+export const GROWTH_COLUMNS = [
+  'id',
+  'household_id',
+  'child_id',
+  'measured_on',
+  'weight_g',
+  'height_mm',
   'note',
   'logged_by',
   'rev',

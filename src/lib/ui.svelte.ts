@@ -4,7 +4,7 @@ import type { DateKey } from './time';
 
 export type SleepDraft = { id: string | null; preset: Partial<Sleep> };
 
-export type Tab = 'sleep' | 'habits' | 'bath' | 'history';
+export type Tab = 'sleep' | 'habits' | 'bath' | 'growth' | 'history';
 
 class Ui {
   /** the tab at the foot of the screen; the app always opens on Sleep */
@@ -18,6 +18,8 @@ class Ui {
   bath = $state<{ id: string | null } | null>(null);
   /** the screen or soother sheet: a new earlier session (id null) or one to edit */
   habit = $state<{ id: string | null; kind: 'screen' | 'soother' } | null>(null);
+  /** the growth sheet: a new measurement (id null) or one to edit */
+  growth = $state<{ id: string | null } | null>(null);
 
   editSleep(id: string) {
     this.sleep = { id, preset: {} };

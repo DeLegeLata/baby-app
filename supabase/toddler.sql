@@ -117,6 +117,27 @@ create table if not exists habits (
 
 create index if not exists habits_household_updated on habits (household_id, updated_at);
 
+-- --- Growth ---------------------------------------------------------------------------
+-- His weight and height on a date, from a checkup or a scale at home. Either one
+-- can be missing. Grams and millimetres, so the numbers stay whole.
+create table if not exists growth (
+  id uuid primary key,
+  household_id uuid not null references households (id) on delete cascade,
+  child_id uuid not null references babies (id) on delete cascade,
+  measured_on date not null,
+  weight_g integer check (weight_g between 500 and 60000),
+  height_mm integer check (height_mm between 300 and 1600),
+  note text,
+  logged_by uuid not null,
+  rev integer not null default 1,
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  schema_version integer not null default 1,
+  check (weight_g is not null or height_mm is not null)
+);
+
+create index if not exists growth_household_updated on growth (household_id, updated_at);
+
 -- The server stamps updated_at, so the pull never misses a row because one
 -- phone's clock runs behind the other's. Both triggers pin an empty
 -- search_path, which Supabase's Security Advisor asks for.
@@ -142,6 +163,10 @@ for each row execute function stamp_updated_at ();
 
 drop trigger if exists habits_stamp on habits;
 create trigger habits_stamp before insert or update on habits
+for each row execute function stamp_updated_at ();
+
+drop trigger if exists growth_stamp on growth;
+create trigger growth_stamp before insert or update on growth
 for each row execute function stamp_updated_at ();
 
 -- --- Reminders ------------------------------------------------------------------------
@@ -222,6 +247,7 @@ alter table sleeps enable row level security;
 alter table days enable row level security;
 alter table baths enable row level security;
 alter table habits enable row level security;
+alter table growth enable row level security;
 alter table push_subscriptions enable row level security;
 alter table planned_reminders enable row level security;
 alter table push_keys enable row level security;
@@ -243,6 +269,11 @@ with
 
 drop policy if exists habits_rw on habits;
 create policy habits_rw on habits for all using (is_member (household_id))
+with
+  check (is_member (household_id));
+
+drop policy if exists growth_rw on growth;
+create policy growth_rw on growth for all using (is_member (household_id))
 with
   check (is_member (household_id));
 
@@ -279,6 +310,12 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table habits;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table growth;
 exception when duplicate_object then null;
 end $$;
 

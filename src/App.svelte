@@ -11,6 +11,8 @@
   import ScreenCard from './lib/components/ScreenCard.svelte';
   import SootherCard from './lib/components/SootherCard.svelte';
   import HabitSheet from './lib/components/HabitSheet.svelte';
+  import GrowthView from './lib/components/GrowthView.svelte';
+  import GrowthSheet from './lib/components/GrowthSheet.svelte';
   import HistoryView from './lib/components/HistoryView.svelte';
   import ActionBar from './lib/components/ActionBar.svelte';
   import TabBar from './lib/components/TabBar.svelte';
@@ -109,6 +111,8 @@
     <SootherCard />
   {:else if ui.tab === 'bath'}
     <BathCard />
+  {:else if ui.tab === 'growth'}
+    <GrowthView />
   {:else}
     <HistoryView />
   {/if}
@@ -143,5 +147,6 @@
 <SettingsSheet />
 <BathSheet />
 <HabitSheet />
+<GrowthSheet />
 <ConflictDialog />
 <ReportView />

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The four screens, at the foot where a thumb reaches them. A dot marks a tab
+  // The five screens, at the foot where a thumb reaches them. A dot marks a tab
   // that needs a look: a screen on or the soother in, or a bath due.
   import { app } from '../state.svelte';
   import { ui, type Tab } from '../ui.svelte';
@@ -8,6 +8,7 @@
     { id: 'sleep', label: 'Sleep', icon: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z' },
     { id: 'habits', label: 'Habits', icon: 'M3 5h18v11H3z M8 20h8 M12 16v4' },
     { id: 'bath', label: 'Bath', icon: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z' },
+    { id: 'growth', label: 'Growth', icon: 'M3 16 16 3l5 5L8 21z M7 12l2 2 M10 9l2 2 M13 6l2 2' },
     { id: 'history', label: 'History', icon: 'M4 20V11 M10 20V5 M16 20v-6 M21 20H3' }
   ];
 
@@ -15,6 +16,7 @@
     sleep: false,
     habits: Boolean(app.screen.running || app.soother.running),
     bath: app.bath.due,
+    growth: false,
     history: false
   });
 

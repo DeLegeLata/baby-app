@@ -2,16 +2,19 @@
 // through db.ts and refresh it. The engine runs on the minute, not the second.
 import {
   createBath,
+  createGrowth,
   createHabit,
   createSleep,
   db,
   deleteBath,
+  deleteGrowth,
   deleteHabit,
   deleteSleep,
   getMeta,
   identity,
   liveBaths,
   liveDays,
+  liveGrowth,
   liveHabits,
   liveSleeps,
   loadChild,
@@ -22,8 +25,10 @@ import {
   setMeta,
   unsentCount,
   updateBath,
+  updateGrowth,
   updateHabit,
   updateSleep,
+  type GrowthFields,
   type Identity
 } from './db';
 import {
@@ -64,6 +69,7 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Growth,
   type Habit,
   type Mood,
   type Place,
@@ -97,6 +103,8 @@ class AppState {
   baths = $state<Bath[]>([]);
   /** screen time, daytime soother use and the weaning plan's stage changes */
   habits = $state<Habit[]>([]);
+  /** weight and height measurements, oldest first */
+  growth = $state<Growth[]>([]);
   settings = $state<AppSettings>(DEFAULT_SETTINGS);
   child = $state<Child>({ name: 'Toddler', birth_at: null });
   who = $state<Identity | null>(null);
@@ -315,6 +323,8 @@ class AppState {
       await db.baths.bulkPut(baths.map(repoint));
       const habits = (await db.habits.toArray()).filter((h) => !stays(h));
       await db.habits.bulkPut(habits.map(repoint));
+      const growth = (await db.growth.toArray()).filter((g) => !stays(g));
+      await db.growth.bulkPut(growth.map(repoint));
     }
 
     this.who = next;
@@ -390,6 +400,7 @@ class AppState {
     this.days = await liveDays();
     this.baths = await liveBaths();
     this.habits = await liveHabits();
+    this.growth = await liveGrowth();
     this.unsent = await unsentCount();
     this.now = Date.now();
     void this.planReminders();
@@ -519,6 +530,20 @@ class AppState {
 
   removeBath(id: string) {
     return this.act(() => deleteBath(id));
+  }
+
+  // --- Growth ---------------------------------------------------------------------
+
+  addGrowth(fields: GrowthFields) {
+    return this.act((who) => createGrowth(who, fields));
+  }
+
+  saveGrowth(id: string, fields: GrowthFields) {
+    return this.act(() => updateGrowth(id, fields));
+  }
+
+  removeGrowth(id: string) {
+    return this.act(() => deleteGrowth(id));
   }
 
   // --- Screens and the soother --------------------------------------------------------

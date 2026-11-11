@@ -7,6 +7,7 @@ import { db, getMeta, setMeta } from './db';
 import {
   BATH_COLUMNS,
   DAY_COLUMNS,
+  GROWTH_COLUMNS,
   HABIT_COLUMNS,
   SLEEP_COLUMNS,
   settingsSchema,
@@ -15,22 +16,24 @@ import {
   type Bath,
   type Child,
   type DayRow,
+  type Growth,
   type Habit,
   type Sleep
 } from './model';
 import { supabase } from './supabase';
 
-export type TableName = 'sleeps' | 'days' | 'baths' | 'habits';
-type Row = Sleep | DayRow | Bath | Habit;
+export type TableName = 'sleeps' | 'days' | 'baths' | 'habits' | 'growth';
+type Row = Sleep | DayRow | Bath | Habit | Growth;
 
 const COLUMNS: Record<TableName, readonly string[]> = {
   sleeps: SLEEP_COLUMNS,
   days: DAY_COLUMNS,
   baths: BATH_COLUMNS,
-  habits: HABIT_COLUMNS
+  habits: HABIT_COLUMNS,
+  growth: GROWTH_COLUMNS
 };
-// habits last, so a project still missing that table holds up only its own rows.
-const TABLES: TableName[] = ['sleeps', 'days', 'baths', 'habits'];
+// The newest tables last, so a project still missing one holds up only its own rows.
+const TABLES: TableName[] = ['sleeps', 'days', 'baths', 'habits', 'growth'];
 
 const local = (table: TableName) => db[table] as unknown as Table<Row, string>;
 
@@ -132,6 +135,9 @@ export async function pullChanges(householdId: string): Promise<number> {
       .eq('household_id', householdId)
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
+    // Until the SQL step adds the growth table there is nothing of it to pull. A measurement
+    // waiting to go up still fails in pushOutbox, and that message says to run the SQL.
+    if (error && table === 'growth' && isMissingTable(error)) continue;
     if (error) throw error;
     for (const row of data ?? []) await applyRow(table, row);
     if (data && data.length) await setMeta(lastPullKey(table), data[data.length - 1].updated_at);
@@ -248,12 +254,17 @@ export async function partnerLastSeen(householdId: string, userId: string): Prom
  * Error instances, a missing table or column means the SQL step was missed,
  * and a request that failed or ran out of time means no connection.
  */
-export function describeError(error: unknown): string {
+function isMissingTable(error: unknown): boolean {
   const e = error as { message?: unknown; code?: unknown } | null;
   const message = typeof e?.message === 'string' ? e.message : String(error);
   const code = typeof e?.code === 'string' ? e.code : '';
-  const missing =
-    ['PGRST204', 'PGRST205', '42P01', '42703'].includes(code) || /schema cache|does not exist/i.test(message);
+  return ['PGRST204', 'PGRST205', '42P01', '42703'].includes(code) || /schema cache|does not exist/i.test(message);
+}
+
+export function describeError(error: unknown): string {
+  const e = error as { message?: unknown } | null;
+  const message = typeof e?.message === 'string' ? e.message : String(error);
+  const missing = isMissingTable(error);
   const unreachable = /failed to fetch|load failed|networkerror|did not answer|aborted/i.test(message);
   if (unreachable) return `Could not reach Supabase. Check this phone's connection and try again. (${message})`;
   return missing
