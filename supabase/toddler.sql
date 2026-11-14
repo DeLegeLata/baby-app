@@ -197,10 +197,11 @@ create table if not exists planned_reminders (
 );
 
 -- Replaced rather than declared inline, so a project made before the bath
--- reminder existed gains it too.
+-- reminder and the log nudges (log_wake 7:30 a.m., log_nap 2:30 p.m.) existed
+-- gains them too.
 alter table planned_reminders drop constraint if exists planned_reminders_kind_check;
 alter table planned_reminders add constraint planned_reminders_kind_check
-check (kind in ('bedtime', 'wake', 'bath', 'test'));
+check (kind in ('bedtime', 'wake', 'bath', 'test', 'log_wake', 'log_nap'));
 
 create index if not exists planned_reminders_due on planned_reminders (send_at)
 where sent_at is null;

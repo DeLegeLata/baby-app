@@ -1,6 +1,6 @@
 <script lang="ts">
   import './app.css';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { app } from './lib/state.svelte';
   import { ui } from './lib/ui.svelte';
   import StatusCard from './lib/components/StatusCard.svelte';
@@ -24,8 +24,78 @@
   import SignIn from './lib/components/SignIn.svelte';
   import ConflictDialog from './lib/components/ConflictDialog.svelte';
   import { since } from './lib/format';
+  import { addDays, atMinutes } from './lib/time';
 
   app.init();
+
+  // A tapped nudge ("When did he wake up?", "Log his nap") opens where that is
+  // entered. It comes in the address when the app was closed, or as a message
+  // from the service worker when it was already open (public/push-sw.js).
+  type Nudge = { kind: 'log_wake' | 'log_nap'; date: string };
+
+  function asNudge(kind: unknown, date: unknown): Nudge | null {
+    return (kind === 'log_wake' || kind === 'log_nap') && typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+      ? { kind, date }
+      : null;
+  }
+
+  function nudgeFromAddress(): Nudge | null {
+    const params = new URLSearchParams(location.search);
+    const found = asNudge(params.get('open'), params.get('date'));
+    if (found) window.history.replaceState(null, '', location.pathname + location.hash);
+    return found;
+  }
+
+  let nudge = $state<Nudge | null>(nudgeFromAddress());
+
+  $effect(() => {
+    const sw = navigator.serviceWorker;
+    if (!sw) return;
+    const onMessage = (e: MessageEvent) => {
+      const found = asNudge(e.data?.open?.kind, e.data?.open?.date);
+      if (found) nudge = found;
+    };
+    sw.addEventListener('message', onMessage);
+    sw.startMessages();
+    return () => sw.removeEventListener('message', onMessage);
+  });
+
+  $effect(() => {
+    const found = nudge;
+    if (!found || !app.ready) return;
+    nudge = null;
+    untrack(() => void openNudge(found));
+  });
+
+  async function openNudge({ kind, date }: Nudge) {
+    ui.tab = 'sleep';
+    if (kind === 'log_wake') {
+      // Last night, to fill in "Up for the day"; a new night if it was never logged.
+      const night = app.sleepsOn(addDays(date, -1)).find((s) => s.kind === 'night');
+      if (night) ui.editSleep(night.id);
+      else ui.newSleep({ kind: 'night' });
+      return;
+    }
+    if (date === app.today) {
+      // The Nap card takes today's nap, already filled with the usual times.
+      await tick();
+      document.getElementById('nap-card')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // Tapped on a later day: that day's nap, or a new one in its usual window.
+    const nap = app.napOn(date);
+    if (nap) return ui.editSleep(nap.id);
+    const sched = app.history.schedule(date);
+    const tz = app.settings.time_zone;
+    const times =
+      sched.napStart !== null && sched.napEnd !== null
+        ? {
+            asleep_at: new Date(atMinutes(date, sched.napStart, tz)).toISOString(),
+            woke_at: new Date(atMinutes(date, sched.napEnd, tz)).toISOString()
+          }
+        : {};
+    ui.newSleep({ kind: 'nap', place: sched.daycare ? 'daycare' : 'bed', ...times });
+  }
 
   // Dim red from the routine until morning, for a dark bedroom.
   $effect(() => {

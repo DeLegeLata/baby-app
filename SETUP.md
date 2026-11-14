@@ -130,6 +130,9 @@ within 90 days.
 Each phone that turns reminders on gets a notification 30 minutes before the
 bedtime routine (the lead time is in Settings), one when it is time to wake him
 in the morning, and one on a day a bath is due (at the time set in Settings).
+Two nudges to log what happened come every day as well: at 7:30 a.m. if he is
+not yet marked up for the day, and at 2:30 p.m. if no nap is logged and the day
+is not marked no nap. Tapping one opens last night's sleep or the Nap card.
 The phones work out the times and write them to `planned_reminders`; the
 `send-reminders` Edge Function, called once a minute by `pg_cron`, sends
 whatever has fallen due as a standard web push. No extra app is needed on

@@ -1176,7 +1176,10 @@ export function guessKind(
 
 // --- Reminders ------------------------------------------------------------------------------
 
-export type ReminderKind = 'bedtime' | 'wake' | 'bath';
+export type ReminderKind = 'bedtime' | 'wake' | 'bath' | 'log_wake' | 'log_nap';
+
+/** When to nudge a parent to log what happened, in minutes from midnight. */
+export const LOG_NUDGE = { wake: 7 * 60 + 30, nap: 14 * 60 + 30 };
 
 export type PlannedReminder = {
   kind: ReminderKind;
@@ -1209,7 +1212,7 @@ export function plannedReminders(input: EngineInput, name: string): PlannedRemin
       )
     });
     out.push({ kind: 'bedtime', date: dayOf(cur, tz), sendAt: null, title: '', body: '' });
-    return out;
+    return [...out, ...logNudges(h, name)];
   }
 
   // Awake, or napping: plan tonight, and cancel a morning reminder he no longer needs.
@@ -1233,6 +1236,43 @@ export function plannedReminders(input: EngineInput, name: string): PlannedRemin
     title: `Bath day for ${name}`,
     body: bath.line
   });
+  // Last, so a database that does not know these kinds yet still takes the others.
+  return [...out, ...logNudges(h, name)];
+}
+
+/**
+ * Nudges to log his wake-up at 7:30 a.m. and his nap at 2:30 p.m., for today
+ * and tomorrow by the calendar, so the evening before already has the morning
+ * one in place. Each is cancelled once what it asks for is in: last night
+ * marked up for the day; a nap logged (a running one counts) or the day marked
+ * no nap.
+ */
+function logNudges(h: History, name: string): PlannedReminder[] {
+  const tz = h.tz;
+  const first = dateKey(h.input.now, tz);
+  const out: PlannedReminder[] = [];
+  for (const date of [first, addDays(first, 1)]) {
+    const up = (h.byDay.get(addDays(date, -1)) ?? []).some(
+      (s) => s.kind === 'night' && s.woke_at !== null && dateKey(s.woke_at, tz) === date
+    );
+    out.push({
+      kind: 'log_wake',
+      date,
+      sendAt: up ? null : atMinutes(date, LOG_NUDGE.wake, tz),
+      title: `When did ${name} wake up?`,
+      body: 'Tap to log his wake-up time.'
+    });
+
+    const sched = h.schedule(date);
+    const napped = (h.byDay.get(date) ?? []).some((s) => s.kind === 'nap');
+    out.push({
+      kind: 'log_nap',
+      date,
+      sendAt: napped || sched.noNap ? null : atMinutes(date, LOG_NUDGE.nap, tz),
+      title: `Log ${name}'s nap`,
+      body: sched.daycare ? 'Tap to enter the daycare nap from Kindertales.' : 'Tap to enter when he napped today.'
+    });
+  }
   return out;
 }
 

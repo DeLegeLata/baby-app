@@ -459,6 +459,47 @@ describe('reminders', () => {
     expect(clock(wake.sendAt!)).toBe('6:30 a.m.');
     expect(overnight.find((r) => r.kind === 'bedtime')).toMatchObject({ date: THU, sendAt: null });
   });
+
+  const nudge = (list: ReturnType<typeof plannedReminders>, kind: string, date: string) =>
+    list.find((r) => r.kind === kind && r.date === date)!;
+
+  it('nudges at 7:30 a.m. to log the wake-up, planned the evening before, until he is marked up', () => {
+    const FRI = addDays(THU, 1);
+    const down = sleep('night', THU, '20:15', null);
+    const evening = plannedReminders(input([down], t(THU, '21:00')), 'Sam');
+    expect(clock(nudge(evening, 'log_wake', FRI).sendAt!)).toBe('7:30 a.m.');
+    expect(nudge(evening, 'log_wake', FRI).title).toBe('When did Sam wake up?');
+
+    const up = { ...down, woke_at: t(THU, '+06:40') };
+    const morning = plannedReminders(input([up], t(FRI, '06:45')), 'Sam');
+    expect(nudge(morning, 'log_wake', FRI).sendAt).toBeNull();
+    // A doze logged as a night that ended the same evening does not count as up.
+    const doze = sleep('night', THU, '19:00', '19:20');
+    expect(nudge(plannedReminders(input([doze], t(THU, '21:00')), 'Sam'), 'log_wake', FRI).sendAt).not.toBeNull();
+  });
+
+  it('nudges at 2:30 p.m. to log the nap, until one is logged or the day is marked no nap', () => {
+    const day = plannedReminders(input([], t(THU, '10:00')), 'Sam');
+    expect(clock(nudge(day, 'log_nap', THU).sendAt!)).toBe('2:30 p.m.');
+    expect(nudge(day, 'log_nap', THU).body).toBe('Tap to enter the daycare nap from Kindertales.');
+    expect(nudge(plannedReminders(input([], t(SAT, '10:00')), 'Sam'), 'log_nap', SAT).body).toBe(
+      'Tap to enter when he napped today.'
+    );
+
+    const nap = sleep('nap', THU, '12:40', '14:15');
+    expect(nudge(plannedReminders(input([nap], t(THU, '14:20')), 'Sam'), 'log_nap', THU).sendAt).toBeNull();
+    const running = sleep('nap', THU, '13:00', null);
+    expect(nudge(plannedReminders(input([running], t(THU, '14:00')), 'Sam'), 'log_nap', THU).sendAt).toBeNull();
+    const days: DayLike[] = [{ date: THU, override: {}, off_tag: null, no_nap: true, deleted_at: null }];
+    expect(nudge(plannedReminders(input([], t(THU, '14:00'), { days }), 'Sam'), 'log_nap', THU).sendAt).toBeNull();
+  });
+
+  it('plans the nudges overnight too, and puts them after the others', () => {
+    const night = sleep('night', THU, '20:15', null);
+    const overnight = plannedReminders(input([night], t(THU, '+01:00')), 'Sam');
+    expect(overnight.map((r) => r.kind)).toEqual(['wake', 'bedtime', 'log_wake', 'log_nap', 'log_wake', 'log_nap']);
+    expect(clock(nudge(overnight, 'log_wake', '2026-10-09').sendAt!)).toBe('7:30 a.m.');
+  });
 });
 
 describe('history', () => {

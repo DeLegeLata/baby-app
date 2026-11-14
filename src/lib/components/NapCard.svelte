@@ -132,7 +132,7 @@
   }
 </script>
 
-<section class="card">
+<section class="card" id="nap-card">
   <div class="spread">
     <h3>{sched.daycare ? 'Daycare' : 'Nap'}</h3>
     {#if sched.daycare}<span class="tag">Today</span>{/if}
